@@ -29,7 +29,12 @@ def O3TensorProductGate(
     if gate_activation is None:
         gate_activation = jax.nn.sigmoid
 
-    tp = O3TensorProduct(x, y, output_irreps, biases)
+    # gating scalars
+    gate_irreps = e3nn.Irreps(
+        f"{output_irreps.num_irreps - output_irreps.count('0e')}x0e"
+    )
+
+    tp = O3TensorProduct(x, y, gate_irreps + output_irreps, biases)
     return e3nn.gate(tp, even_act=scalar_activation, odd_gate_act=gate_activation)
 
 
@@ -37,12 +42,10 @@ def O3Embedding(
     graph: jraph.GraphsTuple,
     node_attributes: e3nn.IrrepsArray,
     output_irreps: e3nn.Irreps,
-    biases: bool = True,
 ) -> jraph.GraphsTuple:
     nodes = O3TensorProduct(
         graph.nodes,
         node_attributes,
         output_irreps,
-        biases,
     )
     return graph._replace(nodes=nodes)

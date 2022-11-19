@@ -13,7 +13,6 @@ def SEDecoder(
     output_irreps: e3nn.Irreps,
     blocks: int = 1,
     task: str = "graph",
-    pool: str = "avg",
 ):
     r"""Steerable E(3) Decoder
     Args:
@@ -21,27 +20,16 @@ def SEDecoder(
         output_irreps:
         blocks:
         task:
-        pool:
     """
 
     def _ApplySEDecoder(graph: SteerableGraphsTuple):
         nodes = graph.nodes
         if task == "graph":
-            # pool over graph
-            pooled_irreps = (
-                (latent_irreps.num_irreps * output_irreps).simplify().sort().irreps
-            )
-            nodes = O3TensorProductGate(nodes, graph.node_attributes, latent_irreps)
-            nodes = O3TensorProduct(nodes, graph.node_attributes, pooled_irreps)
-            # pooling layer
-            # TODO pooling !!
-            if pool == "avg":
-                pass
-            elif pool == "sum":
-                pass
+            raise NotImplementedError("Graph based tasks not yet implemented.")
         elif task == "node":
             # label nodes directly
             pooled_irreps = latent_irreps
+
         # output block
         for _ in range(blocks):
             nodes = e3nn.Linear(pooled_irreps, biases=True)(nodes)
@@ -53,7 +41,7 @@ def SEDecoder(
 
 
 def SEGNNLayer(
-    output_irreps: e3nn.Irreps, blocks: int = 2, norm: bool = False
+    output_irreps: e3nn.Irreps, blocks: int = 2, norm: Optional[str] = None
 ) -> Tuple[Callable, Callable]:
     r"""Steerable E(3) equivariant layer
     Args:
@@ -66,19 +54,17 @@ def SEGNNLayer(
         edge_attribute: e3nn.IrrepsArray,
         sender_nodes: e3nn.IrrepsArray,
         receiver_nodes: e3nn.IrrepsArray,
-        edge_features: e3nn.IrrepsArray = None,
+        edge_features: Optional[e3nn.IrrepsArray] = None,
     ) -> e3nn.IrrepsArray:
         # create messages
         msg = e3nn.concatenate([sender_nodes, receiver_nodes], axis=-1)
         if edge_features is not None:
             msg = e3nn.concatenate([msg, edge_features], axis=-1)
         # message mlp (phi_m in the paper) steered by edge attributeibutes
-        msg = O3TensorProductGate(msg, edge_attribute, output_irreps)
-        for _ in range(blocks - 1):
+        for _ in range(blocks):
             msg = O3TensorProductGate(msg, edge_attribute, output_irreps)
-        # TODO include instance norm
-        if norm:
-            msg = e3nn.BatchNorm(output_irreps)(msg)
+        if norm == "batch":
+            msg = e3nn.BatchNorm(irreps=output_irreps)(msg)
         return msg
 
     def _update(
@@ -88,13 +74,16 @@ def SEGNNLayer(
     ) -> e3nn.IrrepsArray:
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
-        x = O3TensorProductGate(x, node_attribute, output_irreps)
-        for _ in range(blocks - 2):
+        for _ in range(blocks - 1):
             x = O3TensorProductGate(x, node_attribute, output_irreps)
         # last update layer without activation
         update = O3TensorProduct(x, node_attribute, output_irreps)
         # residual connection
         nodes += update
+        if norm == "batch":
+            nodes = e3nn.BatchNorm(irreps=output_irreps)(nodes)
+        elif norm == "instance":
+            raise NotImplementedError("Instance norm not yet implemented")
         return nodes
 
     return _message, _update
@@ -105,7 +94,6 @@ def SEGNN(
     output_irreps: e3nn.Irreps,
     num_layers: Optional[int],
     norm: Optional[str] = None,
-    pool: Optional[str] = "avg",
     task: Optional[str] = "graph",
     blocks_per_layer: int = 2,
 ):
@@ -128,7 +116,7 @@ def SEGNN(
         # TODO should force the data be IrrepArrays everywhere or better to pass irreps around?
         graph: SteerableGraphsTuple,
     ) -> jnp.array:
-        # steerable embedding
+        # embedding
         graph = O3Embedding(graph, graph.node_attributes, hidden_irreps_units[0])
 
         # message passing layers
@@ -143,14 +131,11 @@ def SEGNN(
             )(graph)
 
         # decoder
-        decoder = SEDecoder(
+        nodes = SEDecoder(
             latent_irreps=hidden_irreps_units[-1],
             output_irreps=output_irreps,
             task=task,
-            pool=pool,
-        )
-
-        nodes = decoder(graph)
+        )(graph)
 
         return nodes.array
 
