@@ -127,7 +127,7 @@ def SEGNN(
             graph = SteerableMessagePassing(
                 update_fn=update_fn,
                 message_fn=message_fn,
-                aggregate_messages_fn=jraph.segment_mean,
+                aggregate_messages_fn=jraph.segment_sum,
             )(graph)
 
         # decoder
