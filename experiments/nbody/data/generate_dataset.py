@@ -115,14 +115,14 @@ if __name__ == "__main__":
     np.save("loc_train" + suffix + ".npy", loc_train)
     np.save("vel_train" + suffix + ".npy", vel_train)
     np.save("edges_train" + suffix + ".npy", edges_train)
-    np.save("charges_train" + suffix + ".npy", charges_train)
+    np.save("q_train" + suffix + ".npy", charges_train)
 
     np.save("loc_valid" + suffix + ".npy", loc_valid)
     np.save("vel_valid" + suffix + ".npy", vel_valid)
     np.save("edges_valid" + suffix + ".npy", edges_valid)
-    np.save("charges_valid" + suffix + ".npy", charges_valid)
+    np.save("q_valid" + suffix + ".npy", charges_valid)
 
     np.save("loc_test" + suffix + ".npy", loc_test)
     np.save("vel_test" + suffix + ".npy", vel_test)
     np.save("edges_test" + suffix + ".npy", edges_test)
-    np.save("charges_test" + suffix + ".npy", charges_test)
+    np.save("q_test" + suffix + ".npy", charges_test)
