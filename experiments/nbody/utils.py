@@ -8,7 +8,7 @@ import jax.tree_util as tree
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
 from jraph import segment_mean
 
-from experiments.nbody.nbody_datasets import ChargedDataset, GravityDataset
+from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from segnn import SteerableGraphsTuple
 
 
@@ -62,11 +62,11 @@ def O3Transform(
         )
 
         vel_abs = jnp.sqrt(jnp.power(vel, 2).sum(1, keepdims=True))
-        mean_pos = loc.mean(1, keepdims=True)
+        mean_loc = loc.mean(1, keepdims=True)
 
         nodes = IrrepsArray(
             node_features_irreps,
-            jnp.concatenate((loc - mean_pos, vel, vel_abs), axis=1),
+            jnp.concatenate((loc - mean_loc, vel, vel_abs), axis=1),
         )
 
         edge_attributes = spherical_harmonics(
@@ -85,6 +85,8 @@ def O3Transform(
             + vel_embedding
         )
 
+        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+
         return SteerableGraphsTuple(
             nodes=nodes,
             edges=edges,
@@ -101,6 +103,8 @@ def O3Transform(
 
 
 class NbodyGraphDataloader:
+    """Dataloader for the N-body datasets, directly handles graph features and attributes."""
+
     def __init__(
         self,
         dataset: Union[ChargedDataset, GravityDataset],
@@ -126,16 +130,21 @@ class NbodyGraphDataloader:
             senders, receivers = edge_indices[0], edge_indices[1]
         while i < len(self.dataset):
             cur_batch = min(self.batch_size, len(self.dataset) - i)
+
             if cur_batch < self.batch_size and self._drop_last:
                 break
+
             if cur_batch < self.batch_size and self._dataset_type == "charged":
                 # recompute edges for truncated batch
                 edge_indices = self.dataset.get_edges(cur_batch, self._n_nodes)
                 senders, receivers = edge_indices[0], edge_indices[1]
+
             loc, vel, _, q, targets = self.dataset[i : (i + cur_batch)]
+
             if self._dataset_type == "gravity":
                 edge_indices = knn_edges(loc, self._neighbours, self._n_nodes)
                 senders, receivers = edge_indices[0], edge_indices[1]
+
             graph = SteerableGraphsTuple(
                 senders=senders,
                 receivers=receivers,
@@ -155,3 +164,74 @@ class NbodyGraphDataloader:
     @property
     def n_batches(self) -> float:
         return len(self.dataset) / self.batch_size
+
+
+def setup_nbody_data(args):
+    if args.dataset == "charged":
+        dataset_train = ChargedDataset(
+            partition="train",
+            dataset_name=args.dataset_partition,
+            max_samples=args.max_samples,
+            n_bodies=args.n_bodies,
+        )
+        dataset_val = ChargedDataset(
+            partition="val", dataset_name=args.dataset_partition, n_bodies=args.n_bodies
+        )
+        dataset_test = ChargedDataset(
+            partition="test",
+            dataset_name=args.dataset_partition,
+            n_bodies=args.n_bodies,
+        )
+
+    if args.dataset == "gravity":
+        dataset_train = GravityDataset(
+            partition="train",
+            dataset_name=args.dataset_partition,
+            max_samples=args.max_samples,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+        dataset_val = GravityDataset(
+            partition="val",
+            dataset_name=args.dataset_partition,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+        dataset_test = GravityDataset(
+            partition="test",
+            dataset_name=args.dataset_partition,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+
+    o3_transform = O3Transform(args.node_irreps, args.edge_irreps, args.lmax_attributes)
+
+    loader_train = NbodyGraphDataloader(
+        dataset_train,
+        args.dataset,
+        args.batch_size,
+        drop_last=False,
+        transform=o3_transform,
+        neighbours=args.neighbours if args.dataset == "gravity" else None,
+    )
+    loader_val = NbodyGraphDataloader(
+        dataset_val,
+        args.dataset,
+        args.batch_size,
+        drop_last=True,
+        transform=o3_transform,
+        neighbours=args.neighbours if args.dataset == "gravity" else None,
+    )
+    loader_test = NbodyGraphDataloader(
+        dataset_test,
+        args.dataset,
+        args.batch_size,
+        drop_last=True,
+        transform=o3_transform,
+        neighbours=args.neighbours if args.dataset == "gravity" else None,
+    )
+
+    return loader_train, loader_val, loader_test

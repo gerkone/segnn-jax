@@ -5,7 +5,12 @@ import jax.numpy as jnp
 import jraph
 
 from .blocks import O3Embedding, O3TensorProduct, O3TensorProductGate
-from .graphs import SteerableGraphsTuple, SteerableMessagePassing
+from .graphs import (
+    SteerableGraphsTuple,
+    SteerableMessagePassing,
+    batched_graph_nodes,
+    pooling,
+)
 
 
 def SEDecoder(
@@ -13,42 +18,79 @@ def SEDecoder(
     output_irreps: e3nn.Irreps,
     blocks: int = 1,
     task: str = "graph",
+    pool: Optional[str] = "avg",
 ):
-    r"""Steerable E(3) Decoder
+    r"""Steerable E(3) pooler and decoder.
+
     Args:
-        latent_irreps
-        output_irreps:
-        blocks:
-        task:
+        latent_irreps: Representation from the previous block
+        output_irreps: Output representation
+        blocks: Number of tensor product blocks in the decoder
+        task: Specifies where the output is located. Either 'graph' or 'node'
+
+    Returns:
+        Decoded latent feature space to output space.
     """
+
+    assert task in ["node", "graph"]
+    assert pool in ["avg", "sum", "none", None]
 
     def _ApplySEDecoder(graph: SteerableGraphsTuple):
         nodes = graph.nodes
+        # pre pool block
+        for i in range(blocks):
+            nodes = O3TensorProductGate(
+                nodes, graph.node_attributes, latent_irreps, name=f"prepool_{i}"
+            )
+
         if task == "graph":
-            raise NotImplementedError("Graph based tasks not yet implemented.")
-        elif task == "node":
-            # label nodes directly
-            pooled_irreps = latent_irreps
+            # pool over graph
+            pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup().irreps
+            nodes = O3TensorProduct(
+                nodes, graph.node_attributes, pooled_irreps, name=f"prepool_{blocks}"
+            )
 
-        # output block
-        for _ in range(blocks):
-            nodes = e3nn.Linear(pooled_irreps, biases=True)(nodes)
-            nodes = e3nn.gate(nodes)
+            # pooling layer
+            if pool == "avg":
+                pool_fn = jraph.segment_mean
+            if pool == "sum":
+                pool_fn = jraph.segment_sum
+            nodes_to_graph, n_graphs = batched_graph_nodes(graph)
+            nodes = pooling(graph, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
 
-        return e3nn.Linear(output_irreps, biases=True)(nodes)
+            # post pool
+            for i in range(blocks):
+                nodes = O3TensorProductGate(
+                    nodes, graph.node_attributes, latent_irreps, name=f"postpool_{i}"
+                )
+
+        nodes = O3TensorProduct(
+            nodes, graph.node_attributes, output_irreps, name="output"
+        )
+
+        return nodes
 
     return _ApplySEDecoder
 
 
 def SEGNNLayer(
-    output_irreps: e3nn.Irreps, blocks: int = 2, norm: Optional[str] = None
+    output_irreps: e3nn.Irreps,
+    layer_num: int,
+    blocks: int = 2,
+    norm: Optional[str] = None,
 ) -> Tuple[Callable, Callable]:
     r"""Steerable E(3) equivariant layer
     Args:
-        output_irreps:
-        blocks:
-        norm:
+        output_irreps: Layer output representation
+        layer_num: Numbering of the layer
+        blocks: Number of tensor product blocks in the layer
+        norm: Normalization type. Either be None, 'instance' or 'batch'
+
+    Returns:
+        Two function, message and node update mlps respectively.
     """
+
+    assert norm in ["batch", "instance", "none", None]
 
     def _message(
         edge_attribute: e3nn.IrrepsArray,
@@ -61,8 +103,10 @@ def SEGNNLayer(
         if edge_features is not None:
             msg = e3nn.concatenate([msg, edge_features], axis=-1)
         # message mlp (phi_m in the paper) steered by edge attributeibutes
-        for _ in range(blocks):
-            msg = O3TensorProductGate(msg, edge_attribute, output_irreps)
+        for i in range(blocks):
+            msg = O3TensorProductGate(
+                msg, edge_attribute, output_irreps, name=f"message_{i}_{layer_num}"
+            )
         if norm == "batch":
             msg = e3nn.BatchNorm(irreps=output_irreps)(msg)
         return msg
@@ -74,15 +118,19 @@ def SEGNNLayer(
     ) -> e3nn.IrrepsArray:
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
-        for _ in range(blocks - 1):
-            x = O3TensorProductGate(x, node_attribute, output_irreps)
+        for i in range(blocks - 1):
+            x = O3TensorProductGate(
+                x, node_attribute, output_irreps, name=f"update_{i}_{layer_num}"
+            )
         # last update layer without activation
-        update = O3TensorProduct(x, node_attribute, output_irreps)
+        update = O3TensorProduct(
+            x, node_attribute, output_irreps, name=f"update_{blocks}_{layer_num}"
+        )
         # residual connection
         nodes += update
         if norm == "batch":
             nodes = e3nn.BatchNorm(irreps=output_irreps)(nodes)
-        elif norm == "instance":
+        if norm == "instance":
             raise NotImplementedError("Instance norm not yet implemented")
         return nodes
 
@@ -92,37 +140,52 @@ def SEGNNLayer(
 def SEGNN(
     hidden_irreps: Union[List[e3nn.Irreps], e3nn.Irreps],
     output_irreps: e3nn.Irreps,
-    num_layers: Optional[int],
+    num_layers: int,
     norm: Optional[str] = None,
+    pool: Optional[str] = "avg",
     task: Optional[str] = "graph",
     blocks_per_layer: int = 2,
 ):
-    r"""Steerable E(3) equivariant network
+    r"""
+    Steerable E(3) equivariant network.
+
+    Original paper https://arxiv.org/abs/2110.02905.
+
     Args:
-        hidden_irreps:
-        output_irreps:
-        num_layers:
-        norm:
-        pool:
-        task:
-        blocks_per_layer:
+        hidden_irreps: Feature representation in the hidden layers
+        output_irreps: Output representation.
+        num_layers: Number of message passing layers
+        norm: Normalization type. Either be None, 'instance' or 'batch'
+        pool: Pooling mode (only for graph-wise tasks)
+        task: Specifies where the output is located. Either 'graph' or 'node'
+        blocks_per_layer: Number of tensor product blocks in each message passing
+
+    Returns:
+        The configured SEGNN model.
     """
+
     if isinstance(hidden_irreps, e3nn.Irreps):
         hidden_irreps_units = num_layers * [hidden_irreps]
     else:
         hidden_irreps_units = hidden_irreps
 
     def _ApplySEGNN(
-        # TODO should force the data be IrrepArrays everywhere or better to pass irreps around?
         graph: SteerableGraphsTuple,
     ) -> jnp.array:
+
         # embedding
-        graph = O3Embedding(graph, graph.node_attributes, hidden_irreps_units[0])
+        # NOTE this is not in the original paper but achieves good results
+        graph = O3Embedding(
+            graph,
+            graph.node_attributes,
+            hidden_irreps_units[0],
+            edge_attributes=graph.edge_attributes,
+        )
 
         # message passing layers
-        for hrp in hidden_irreps_units:
+        for n, hrp in enumerate(hidden_irreps_units):
             message_fn, update_fn = SEGNNLayer(
-                output_irreps=hrp, blocks=blocks_per_layer, norm=norm
+                output_irreps=hrp, layer_num=n, blocks=blocks_per_layer, norm=norm
             )
             graph = SteerableMessagePassing(
                 update_fn=update_fn,
@@ -135,6 +198,7 @@ def SEGNN(
             latent_irreps=hidden_irreps_units[-1],
             output_irreps=output_irreps,
             task=task,
+            pool=pool,
         )(graph)
 
         return nodes.array
