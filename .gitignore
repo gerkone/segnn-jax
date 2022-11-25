@@ -2,3 +2,5 @@
 __pycache__
 *.npy
 venv
+wandb
+nohup.out

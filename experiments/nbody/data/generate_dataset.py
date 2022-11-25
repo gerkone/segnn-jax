@@ -1,8 +1,8 @@
 """
 Generate nbody and gravity datasets.
 
-nbody_small:   python3 -u generate_dataset.py --simulation=charged --num-train 10000 --seed 43 --suffix small
-gravity_small: python3 -u generate_dataset.py --simulation=gravity --num-train 10000 --seed 43 --suffix small
+nbody_small:   python3 -u generate_dataset.py --simulation=charged --num-train 10000 --seed 43
+gravity_small: python3 -u generate_dataset.py --simulation=gravity --num-train 10000 --seed 43
 """
 import argparse
 import time
@@ -31,19 +31,18 @@ parser.add_argument(
 )
 parser.add_argument("--length", type=int, default=5000, help="Length of trajectory.")
 parser.add_argument(
-    "--length_test", type=int, default=5000, help="Length of test set trajectory."
+    "--length-test", type=int, default=5000, help="Length of test set trajectory."
 )
 parser.add_argument(
     "--sample-freq", type=int, default=100, help="How often to sample the trajectory."
 )
 parser.add_argument(
-    "--n_balls", type=int, default=5, help="Number of balls in the simulation."
+    "--n-balls", type=int, default=5, help="Number of balls in the simulation."
 )
 parser.add_argument("--seed", type=int, default=42, help="Random seed.")
 parser.add_argument(
-    "--initial_vel", type=int, default=1, help="consider initial velocity"
+    "--initial-vel", type=int, default=1, help="consider initial velocity"
 )
-parser.add_argument("--suffix", type=str, default="", help="add a suffix to the name")
 
 args = parser.parse_args()
 
@@ -62,7 +61,7 @@ elif args.simulation == "gravity":
 else:
     raise ValueError("Simulation {} not implemented".format(args.simulation))
 
-suffix += str(args.n_balls) + "_initvel%d" % args.initial_vel + args.suffix
+suffix += str(args.n_balls) + "_initvel%d" % args.initial_vel
 np.random.seed(args.seed)
 
 print(suffix)

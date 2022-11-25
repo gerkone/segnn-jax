@@ -8,13 +8,12 @@ import jax.numpy as jnp
 import optax
 from e3nn_jax import Irreps
 
-from experiments.nbody.nbody_datasets import ChargedDataset, GravityDataset
+import wandb
+from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from experiments.nbody.utils import NbodyGraphDataloader, O3Transform
 from segnn import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
 key = jax.random.PRNGKey(0)
-
-time_exp_dic = {"time": 0, "counter": 0}
 
 
 def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args):
@@ -45,6 +44,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         transform=o3_transform,
         neighbours=args.neighbours if args.dataset == "gravity" else None,
     )
+
+    print("Jitting...")
 
     params, segnn_state = segnn.init(key, next(iter(loader_train))[0])
     opt_init, opt_update = optax.adamw(
@@ -80,13 +81,10 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         return loss, optax.apply_updates(params, updates), opt_state
 
     opt_state = opt_init(params)
-    avg_time = 0
+    avg_time = []
 
-    print("Jitting...")
-
-    for e in range(0, args.epochs):
+    for e in range(args.epochs):
         train_loss = 0
-        val_loss = 0
         train_start = time.perf_counter_ns()
         for graph, target in loader_train:
             loss, params, opt_state = update(
@@ -96,35 +94,54 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         train_time = (
             (time.perf_counter_ns() - train_start) / 1e6 / loader_train.n_batches
         )
-        eval_start = time.perf_counter_ns()
-        for graph, target in loader_val:
-            val_loss += mse(params, segnn_state, graph, target)
-        eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / loader_val.n_batches
-        avg_time += eval_time
         train_loss /= loader_train.n_batches
-        val_loss /= loader_val.n_batches
+        if args.wandb:
+            wandb.log({"train_loss": train_loss, "update_time": train_time})
         print(
-            "[Epoch {: <3}] training {:.6f}, validation {:.6f} - "
-            "update time {:.3f}ms, eval time {:.3f}ms ({} graph batch)".format(
-                e + 1, train_loss, val_loss, train_time, eval_time, args.batch_size
-            )
+            "[Epoch {:>4}] training loss {:.6f}, update time {:.3f}ms".format(
+                e + 1, train_loss, train_time
+            ),
+            end="",
         )
+        if e % args.val_freq == 0:
+            val_loss = 0
+            eval_start = time.perf_counter_ns()
+            for graph, target in loader_val:
+                val_loss += jax.lax.stop_gradient(
+                    mse(params, segnn_state, graph, target)
+                )
+            eval_time = (
+                (time.perf_counter_ns() - eval_start) / 1e6 / loader_val.n_batches
+            )
+            avg_time.append(eval_time)
+            val_loss /= loader_val.n_batches
+            if args.wandb:
+                wandb.log({"val_loss": val_loss, "eval_time": eval_time})
+            print(
+                " - validation loss {:.6f}, eval time {:.3f}ms ({} graph batch)".format(
+                    val_loss, eval_time, args.batch_size
+                ),
+                end="",
+            )
+        print()
 
     test_loss = 0
     for graph, target in loader_test:
-        test_loss += mse(params, segnn_state, graph, target)
+        test_loss += jax.lax.stop_gradient(mse(params, segnn_state, graph, target))
     test_loss /= loader_test.n_batches
+    avg_time = sum(avg_time) / len(avg_time)
+    if args.wandb:
+        wandb.log({"test_loss": test_loss, "avg_eval_time": avg_time})
     print(
         "Training done. Test loss {:.6f} - "
         "eval time {:.3f}ms (average, {} graph batch)".format(
-            test_loss, avg_time / args.epochs, args.batch_size
+            test_loss, avg_time, args.batch_size
         )
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-
     # Run parameters
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument(
@@ -150,6 +167,12 @@ if __name__ == "__main__":
         default=5,
         help="Number of bodies in the dataset",
     )
+    parser.add_argument(
+        "--val-freq",
+        type=int,
+        default=10,
+        help="Evaluation frequency (number of epochs)",
+    )
 
     # gravity parameters
     parser.add_argument(
@@ -158,16 +181,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--neighbours",
         type=int,
-        default=6,
+        default=20,
         help="Number of connected nearest neighbours",
     )
 
-    # charged parameters
     parser.add_argument(
-        "--charged-name",
+        "--dataset-name",
         type=str,
         default="small",
-        help="Name of nbody data [default, small]",
+        help="Name of nbody data partition [default, small]",
     )
 
     # Model parameters
@@ -199,18 +221,54 @@ if __name__ == "__main__":
         default="batch",
         help="Normalisation type [instance, batch]",
     )
+
+    # wandb parameters
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Activate weights and biases logging",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default="segnn",
+        help="Weights and biases project",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        default="",
+        help="Weights and biases entity",
+    )
+
     args = parser.parse_args()
 
     args.node_irreps = Irreps("2x1o + 1x0e")
     args.edge_irreps = Irreps("2x0e")
 
-    args.edge_attr_irreps = Irreps.spherical_harmonics(args.lmax_attributes)
-    args.node_attr_irreps = Irreps.spherical_harmonics(args.lmax_attributes)
+    # connect to wandb
+    if args.wandb:
+        wandb_name = "_".join(
+            [
+                args.wandb_project,
+                args.dataset,
+                args.dataset_name,
+                args.target,
+                str(int(time.time())),
+            ]
+        )
+        wandb.init(
+            project=args.wandb_project,
+            name=wandb_name,
+            config=args,
+            entity=args.wandb_entity,
+        )
 
     # Create hidden irreps
     hidden_irreps = weight_balanced_irreps(
-        args.units,
-        args.node_attr_irreps,
+        scalar_units=args.units,
+        # attribute irreps
+        irreps_right=Irreps.spherical_harmonics(args.lmax_attributes),
         use_sh=True,
         lmax=args.lmax_hidden,
     )
@@ -229,21 +287,23 @@ if __name__ == "__main__":
     if args.dataset == "charged":
         dataset_train = ChargedDataset(
             partition="train",
-            dataset_name=args.charged_name,
+            dataset_name=args.dataset_name,
             max_samples=args.max_samples,
             n_bodies=args.n_bodies,
         )
         dataset_val = ChargedDataset(
-            partition="val", dataset_name=args.charged_name, n_bodies=args.n_bodies
+            partition="val", dataset_name=args.dataset_name, n_bodies=args.n_bodies
         )
         dataset_test = ChargedDataset(
-            partition="test", dataset_name=args.charged_name, n_bodies=args.n_bodies
+            partition="test",
+            dataset_name=args.dataset_name,
+            n_bodies=args.n_bodies,
         )
 
     if args.dataset == "gravity":
         dataset_train = GravityDataset(
             partition="train",
-            dataset_name=args.charged_name,
+            dataset_name=args.dataset_name,
             max_samples=args.max_samples,
             neighbours=args.neighbours,
             target=args.target,
@@ -251,14 +311,14 @@ if __name__ == "__main__":
         )
         dataset_val = GravityDataset(
             partition="val",
-            dataset_name=args.charged_name,
+            dataset_name=args.dataset_name,
             neighbours=args.neighbours,
             target=args.target,
             n_bodies=args.n_bodies,
         )
         dataset_test = GravityDataset(
             partition="test",
-            dataset_name=args.charged_name,
+            dataset_name=args.dataset_name,
             neighbours=args.neighbours,
             target=args.target,
             n_bodies=args.n_bodies,

@@ -1,4 +1,4 @@
-from typing import Callable, NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional, Tuple
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
@@ -42,14 +42,24 @@ def SteerableMessagePassing(
     update_fn: Optional[MPNNUpdateFn],
     aggregate_messages_fn: AggregateEdgesToNodesFn = segment_sum,
 ):
-    """Returns a method that applies a configured MPNN."""
+    """Returns a method that applies a simple steerable MPNN.
+
+    Args:
+        message_fn: function used to compute the messages
+        update_fn: function used to update the nodes using the aggregated messages
+        aggregate_messages_fn: message aggregation function.
+
+    Returns:
+        A method that applies the configured MPNN.
+    """
     # TODO is this needed or can we use the GraphNetwork provided in jraph?
-    # judginf from the types this is needed but it's weird
     if message_fn is None or update_fn is None:
         raise ValueError("Must supply both message and update functions.")
 
     def _ApplyGraphNet(graph: SteerableGraphsTuple) -> SteerableGraphsTuple:
-        """Applies a configured MPNN to a SteerableGraphsTuple graph.
+        """
+        Applies a configured MPNN to a SteerableGraphsTuple graph.
+
         Args:
           graph: a `SteerableGraphsTuple` containing the graph.
         Returns:
@@ -86,3 +96,35 @@ def SteerableMessagePassing(
         return graph._replace(nodes=nodes)
 
     return _ApplyGraphNet
+
+
+def batched_graph_nodes(graph: SteerableGraphsTuple) -> Tuple[jnp.array, int]:
+    """Map the (batched) node to the corresponding (batched) graph"""
+    n_graphs = graph.n_node.shape[0]
+    graph_idx = jnp.arange(n_graphs)
+    # Equivalent to jnp.sum(n_node), but jittable
+    sum_n_node = tree.tree_leaves(graph.nodes)[0].shape[0]
+    return (
+        jnp.repeat(graph_idx, graph.n_node, axis=0, total_repeat_length=sum_n_node),
+        n_graphs,
+    )
+
+
+def pooling(
+    nodes: e3nn.IrrepsArray,
+    batch: jnp.array,
+    n_graphs: int,
+    aggregate_fn: Callable = segment_sum,
+) -> e3nn.IrrepsArray:
+    """Pools over graph nodes with the specified aggregation.
+
+    Args:
+        nodes: input nodes
+        batch: batch that maps nodes the corresponding graph
+        n_graphs: number of graphs in the batch
+        aggregate_fn: function used to update pool over the nodes
+
+    Returns:
+        The pooled graph nodes.
+    """
+    return tree.tree_map(lambda n: aggregate_fn(n, batch, n_graphs), nodes)

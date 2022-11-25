@@ -23,15 +23,10 @@ class BaseDataset(ABC):
         else:
             self.suffix = self.partition
         self.dataset_name = dataset_name
-        if dataset_name == "default":
-            self.suffix += f"_{data_type}{n_bodies}_initvel1"
-        elif dataset_name in ("small", "small_out_dist"):
-            self.suffix += f"_{data_type}{n_bodies}_initvel1small"
-        else:
-            raise Exception("Wrong dataset name %s" % self.dataset_name)
+
+        self.suffix += f"_{data_type}{n_bodies}_initvel1"
 
         self.max_samples = int(max_samples)
-        self.dataset_name = dataset_name
 
     def set_max_samples(self, max_samples):
         self.max_samples = int(max_samples)
@@ -39,6 +34,18 @@ class BaseDataset(ABC):
 
     def get_n_nodes(self):
         return self.data[0].shape[2]
+
+    def get_partition_frames(self) -> Tuple[int, int]:
+        if self.dataset_name == "default":
+            frame_0, frame_target = 6, 8
+        elif self.dataset_name == "small":
+            frame_0, frame_target = 30, 40
+        elif self.dataset_name == "small_out_dist":
+            frame_0, frame_target = 20, 30
+        else:
+            raise Exception("Wrong dataset partition %s" % self.dataset_name)
+
+        return frame_0, frame_target
 
     def __len__(self) -> int:
         return len(self.data[0])
@@ -98,14 +105,7 @@ class ChargedDataset(BaseDataset):
         return (loc, vel, edge_attr, charges), edges
 
     def __getitem__(self, i: Union[Sequence, int]) -> Tuple[jnp.ndarray, ...]:
-        if self.dataset_name == "default":
-            frame_0, frame_T = 6, 8
-        elif self.dataset_name == "small":
-            frame_0, frame_T = 30, 40
-        elif self.dataset_name == "small_out_dist":
-            frame_0, frame_T = 20, 30
-        else:
-            raise Exception("Wrong dataset partition %s" % self.dataset_name)
+        frame_0, frame_target = self.get_partition_frames()
 
         loc, vel, edge_attr, charges = self.data
         loc, vel, edge_attr, charges, target_loc = (
@@ -113,7 +113,7 @@ class ChargedDataset(BaseDataset):
             vel[i, frame_0],
             edge_attr[i],
             charges[i],
-            loc[i, frame_T],
+            loc[i, frame_target],
         )
 
         if not isinstance(i, int):
@@ -176,20 +176,13 @@ class GravityDataset(BaseDataset):
         return (loc, vel, force, mass)
 
     def __getitem__(self, i: Union[Sequence, int]) -> Tuple[jnp.ndarray, ...]:
-        if self.dataset_name == "default":
-            frame_0, frame_T = 6, 8
-        elif self.dataset_name == "small":
-            frame_0, frame_T = 30, 40
-        elif self.dataset_name == "small_out_dist":
-            frame_0, frame_T = 20, 30
-        else:
-            raise Exception("Wrong dataset partition %s" % self.dataset_name)
+        frame_0, frame_target = self.get_partition_frames()
 
         loc, vel, force, mass = self.data
         if self.target == "pos":
-            y = loc[i, frame_T]
+            y = loc[i, frame_target]
         elif self.target == "force":
-            y = force[i, frame_T]
+            y = force[i, frame_target]
         loc, vel, force, mass = (loc[i, frame_0], vel[i, frame_0], force[i], mass[i])
 
         if not isinstance(i, int):
