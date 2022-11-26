@@ -140,8 +140,8 @@ class NbodyGraphDataloader:
             )
             st_graph = self._transform(st_graph, loc, vel, q)
             # relative shift as target
-            # if self._dataset_type == "charged":
-            targets = targets - loc
+            if self._dataset_type == "charged":
+                targets = targets - loc
             i += cur_batch
             yield st_graph, targets
 
