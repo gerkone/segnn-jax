@@ -1,8 +1,6 @@
-from functools import partial
 from math import floor
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Union
 
-import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
@@ -10,31 +8,6 @@ from jraph import GraphsTuple, segment_mean
 
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from segnn import SteerableGraphsTuple
-
-
-def knn_edges(loc: jnp.array, k: int, n_nodes: int):
-    """Naive k-shortest edges (for each batch)."""
-
-    @partial(jax.jit, static_argnames=["k"])
-    def top_k_linear(loc: jnp.array, k: int) -> jnp.array:
-        """Returns the minimum values of a inearized upper triangular matrix."""
-        dists = jnp.sum((loc[:, None, :] - loc[None, :, :]) ** 2, axis=-1)
-        dists = dists[jnp.triu_indices(loc.shape[0], k=1)]
-        return jax.lax.approx_min_k(dists, k)[1]
-
-    def lin_to_triu(k: int, n: int, shift: int) -> Tuple[int, int]:
-        """Convert linear to triangular indices."""
-        i = n - 2 - int(jnp.sqrt(-8 * k + 4 * n * (n - 1) - 7) / 2.0 - 0.5)
-        j = int(k + i + 1 - n * (n - 1) / 2 + (n - i) * ((n - i) - 1) / 2)
-        return i + shift, j + shift
-
-    return jnp.array(
-        [
-            lin_to_triu(int(e), n_nodes, shift=b)
-            for b in range(0, loc.shape[0] - 1, n_nodes)
-            for e in top_k_linear(loc[b : b + n_nodes], k)
-        ]
-    ).T
 
 
 def O3Transform(
@@ -133,6 +106,8 @@ class NbodyGraphDataloader:
         if self._dataset_type == "charged":
             edge_indices = self.dataset.get_edges(self.batch_size, self._n_nodes)
             senders, receivers = edge_indices[0], edge_indices[1]
+        elif self._dataset_type == "gravity":
+            from pcdiff import knn_graph
         while i < len(self.dataset):
             cur_batch = min(self.batch_size, len(self.dataset) - i)
 
@@ -147,8 +122,10 @@ class NbodyGraphDataloader:
             loc, vel, _, q, targets = self.dataset[i : (i + cur_batch)]
 
             if self._dataset_type == "gravity":
-                edge_indices = knn_edges(loc, self._neighbours, self._n_nodes)
-                senders, receivers = edge_indices[0], edge_indices[1]
+                edge_indices = knn_graph(loc, self._neighbours)
+                senders, receivers = jnp.array(edge_indices[0]), jnp.array(
+                    edge_indices[1]
+                )
 
             st_graph = SteerableGraphsTuple(
                 graph=GraphsTuple(
@@ -163,8 +140,8 @@ class NbodyGraphDataloader:
             )
             st_graph = self._transform(st_graph, loc, vel, q)
             # relative shift as target
-            if self._dataset_type == "charged":
-                targets = targets - loc
+            # if self._dataset_type == "charged":
+            targets = targets - loc
             i += cur_batch
             yield st_graph, targets
 
