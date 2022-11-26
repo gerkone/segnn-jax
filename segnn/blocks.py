@@ -4,7 +4,7 @@ from typing import Callable, Optional
 import e3nn_jax as e3nn
 import jax
 
-from .graphs import SteerableGraphsTuple
+from .graph_utils import SteerableGraphsTuple
 
 
 def O3TensorProduct(
@@ -86,33 +86,37 @@ def O3TensorProductGate(
 
 
 def O3Embedding(
-    graph: SteerableGraphsTuple,
-    node_attributes: e3nn.IrrepsArray,
+    st_graph: SteerableGraphsTuple,
     embed_irreps: e3nn.Irreps,
-    edge_attributes: Optional[e3nn.IrrepsArray] = None,
+    embed_msg_features: bool = True,
 ) -> SteerableGraphsTuple:
     """Linear steerable embedding for the graph nodes.
 
     Embeds the graph nodes in the representation space :param embed_irreps:.
 
     Args:
-        graph (SteerableGraphsTuple): Input graph
-        node_attributes (IrrepsArray): Steerable node attributes
+        st_graph (SteerableGraphsTuple): Input graph
         embed_irreps: Output representation
-        edge_attributes (IrrepsArray): Steerable edge attributes
+        embed_msg_features: If true also embed edges/message passing features
 
     Returns:
         The graph with replaced node embedding.
     """
+    graph = st_graph.graph
     nodes = O3TensorProduct(
-        graph.nodes, node_attributes, embed_irreps, name="o3_mbedding"
+        graph.nodes, st_graph.node_attributes, embed_irreps, name="o3_mbedding_nodes"
     )
-    graph = graph._replace(nodes=nodes)
+    st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
 
-    if edge_attributes:
-        edges = O3TensorProduct(
-            graph.edges, edge_attributes, embed_irreps, name="o3_mbedding_edges"
+    if embed_msg_features:
+        additional_message_features = O3TensorProduct(
+            st_graph.additional_message_features,
+            st_graph.edge_attributes,
+            embed_irreps,
+            name="o3_mbedding_msg_features",
         )
-        graph = graph._replace(edges=edges)
+        st_graph = st_graph._replace(
+            additional_message_features=additional_message_features
+        )
 
-    return graph
+    return st_graph

@@ -2,11 +2,11 @@ import argparse
 import time
 from typing import Any, Tuple
 
+import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
-from e3nn_jax import Irreps
 
 import wandb
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
@@ -46,7 +46,6 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
     )
 
     print("Jitting...")
-
     params, segnn_state = segnn.init(key, next(iter(loader_train))[0])
     opt_init, opt_update = optax.adamw(
         learning_rate=args.lr, weight_decay=args.weight_decay
@@ -95,8 +94,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
             (time.perf_counter_ns() - train_start) / 1e6 / loader_train.n_batches
         )
         train_loss /= loader_train.n_batches
-        if args.wandb:
-            wandb.log({"train_loss": train_loss, "update_time": train_time})
+        wandb_logs = {"train_loss": train_loss, "update_time": train_time}
         print(
             "[Epoch {:>4}] training loss {:.6f}, update time {:.3f}ms".format(
                 e + 1, train_loss, train_time
@@ -115,8 +113,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
             )
             avg_time.append(eval_time)
             val_loss /= loader_val.n_batches
-            if args.wandb:
-                wandb.log({"val_loss": val_loss, "eval_time": eval_time})
+            wandb_logs.update({"val_loss": val_loss, "eval_time": eval_time})
             print(
                 " - validation loss {:.6f}, eval time {:.3f}ms ({} graph batch)".format(
                     val_loss, eval_time, args.batch_size
@@ -124,6 +121,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
                 end="",
             )
         print()
+        if args.wandb:
+            wandb.log(wandb_logs)
 
     test_loss = 0
     for graph, target in loader_test:
@@ -151,7 +150,9 @@ if __name__ == "__main__":
         help="Batch size.",
     )
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
-    parser.add_argument("--weight-decay", type=float, default=1e-8, help="Weight decay")
+    parser.add_argument(
+        "--weight-decay", type=float, default=1e-12, help="Weight decay"
+    )
     parser.add_argument(
         "--dataset", type=str, default="charged", help="Dataset [charged, gravity]"
     )
@@ -243,8 +244,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.node_irreps = Irreps("2x1o + 1x0e")
-    args.edge_irreps = Irreps("2x0e")
+    args.node_irreps = e3nn.Irreps("2x1o + 1x0e")
+    args.edge_irreps = e3nn.Irreps("2x0e")
 
     # connect to wandb
     if args.wandb:
@@ -268,7 +269,7 @@ if __name__ == "__main__":
     hidden_irreps = weight_balanced_irreps(
         scalar_units=args.units,
         # attribute irreps
-        irreps_right=Irreps.spherical_harmonics(args.lmax_attributes),
+        irreps_right=e3nn.Irreps.spherical_harmonics(args.lmax_attributes),
         use_sh=True,
         lmax=args.lmax_hidden,
     )
@@ -276,7 +277,7 @@ if __name__ == "__main__":
     # build model
     segnn = SEGNN(
         hidden_irreps=hidden_irreps,
-        output_irreps=Irreps("1x1o"),
+        output_irreps=e3nn.Irreps("1x1o"),
         num_layers=args.layers,
         task="node",
         blocks_per_layer=args.blocks,
