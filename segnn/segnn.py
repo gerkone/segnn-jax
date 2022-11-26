@@ -1,16 +1,12 @@
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
 import jraph
+from jax.tree_util import Partial
 
 from .blocks import O3Embedding, O3TensorProduct, O3TensorProductGate
-from .graphs import (
-    SteerableGraphsTuple,
-    SteerableMessagePassing,
-    batched_graph_nodes,
-    pooling,
-)
+from .graph_utils import SteerableGraphsTuple, batched_graph_nodes, pooling
 
 
 def SEDecoder(
@@ -35,19 +31,19 @@ def SEDecoder(
     assert task in ["node", "graph"]
     assert pool in ["avg", "sum", "none", None]
 
-    def _ApplySEDecoder(graph: SteerableGraphsTuple):
-        nodes = graph.nodes
+    def _ApplySEDecoder(st_graph: SteerableGraphsTuple):
+        nodes = st_graph.graph.nodes
         # pre pool block
         for i in range(blocks):
             nodes = O3TensorProductGate(
-                nodes, graph.node_attributes, latent_irreps, name=f"prepool_{i}"
+                nodes, st_graph.node_attributes, latent_irreps, name=f"prepool_{i}"
             )
 
         if task == "graph":
             # pool over graph
             pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup().irreps
             nodes = O3TensorProduct(
-                nodes, graph.node_attributes, pooled_irreps, name=f"prepool_{blocks}"
+                nodes, st_graph.node_attributes, pooled_irreps, name=f"prepool_{blocks}"
             )
 
             # pooling layer
@@ -55,17 +51,17 @@ def SEDecoder(
                 pool_fn = jraph.segment_mean
             if pool == "sum":
                 pool_fn = jraph.segment_sum
-            nodes_to_graph, n_graphs = batched_graph_nodes(graph)
-            nodes = pooling(graph, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
+            nodes_to_graph, n_graphs = batched_graph_nodes(st_graph.graph)
+            nodes = pooling(st_graph, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
 
             # post pool
             for i in range(blocks):
                 nodes = O3TensorProductGate(
-                    nodes, graph.node_attributes, latent_irreps, name=f"postpool_{i}"
+                    nodes, st_graph.node_attributes, latent_irreps, name=f"postpool_{i}"
                 )
 
         nodes = O3TensorProduct(
-            nodes, graph.node_attributes, output_irreps, name="output"
+            nodes, st_graph.node_attributes, output_irreps, name="output"
         )
 
         return nodes
@@ -87,21 +83,26 @@ def SEGNNLayer(
         norm: Normalization type. Either be None, 'instance' or 'batch'
 
     Returns:
-        Two function, message and node update mlps respectively.
+        Two function compatible with the jraph networks, message and node
+        update mlps respectively.
     """
 
     assert norm in ["batch", "instance", "none", None]
 
     def _message(
         edge_attribute: e3nn.IrrepsArray,
-        sender_nodes: e3nn.IrrepsArray,
-        receiver_nodes: e3nn.IrrepsArray,
-        edge_features: Optional[e3nn.IrrepsArray] = None,
+        additional_message_features: e3nn.IrrepsArray,
+        edge_features: e3nn.IrrepsArray,
+        incoming: e3nn.IrrepsArray,
+        outgoing: e3nn.IrrepsArray,
+        globals_: Any,
     ) -> e3nn.IrrepsArray:
+        _ = globals_
+        _ = edge_features
         # create messages
-        msg = e3nn.concatenate([sender_nodes, receiver_nodes], axis=-1)
-        if edge_features is not None:
-            msg = e3nn.concatenate([msg, edge_features], axis=-1)
+        msg = e3nn.concatenate([incoming, outgoing], axis=-1)
+        if additional_message_features is not None:
+            msg = e3nn.concatenate([msg, additional_message_features], axis=-1)
         # message mlp (phi_m in the paper) steered by edge attributeibutes
         for i in range(blocks):
             msg = O3TensorProductGate(
@@ -114,8 +115,12 @@ def SEGNNLayer(
     def _update(
         node_attribute: e3nn.IrrepsArray,
         nodes: e3nn.IrrepsArray,
+        senders: Any,
         msg: e3nn.IrrepsArray,
+        globals_: Any,
     ) -> e3nn.IrrepsArray:
+        _ = senders
+        _ = globals_
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
         for i in range(blocks - 1):
@@ -145,6 +150,7 @@ def SEGNN(
     pool: Optional[str] = "avg",
     task: Optional[str] = "graph",
     blocks_per_layer: int = 2,
+    embed_msg_features: bool = True,
 ):
     r"""
     Steerable E(3) equivariant network.
@@ -159,6 +165,7 @@ def SEGNN(
         pool: Pooling mode (only for graph-wise tasks)
         task: Specifies where the output is located. Either 'graph' or 'node'
         blocks_per_layer: Number of tensor product blocks in each message passing
+        embed_msg_features: Set to true to also embed edges/message passing features
 
     Returns:
         The configured SEGNN model.
@@ -169,17 +176,12 @@ def SEGNN(
     else:
         hidden_irreps_units = hidden_irreps
 
-    def _ApplySEGNN(
-        graph: SteerableGraphsTuple,
-    ) -> jnp.array:
+    def _ApplySEGNN(st_graph: SteerableGraphsTuple) -> jnp.array:
 
         # embedding
-        # NOTE this is not in the original paper but achieves good results
-        graph = O3Embedding(
-            graph,
-            graph.node_attributes,
-            hidden_irreps_units[0],
-            edge_attributes=graph.edge_attributes,
+        # NOTE edge embedding is not in the original paper but can get good results
+        st_graph = O3Embedding(
+            st_graph, hidden_irreps_units[0], embed_msg_features=embed_msg_features
         )
 
         # message passing layers
@@ -187,11 +189,19 @@ def SEGNN(
             message_fn, update_fn = SEGNNLayer(
                 output_irreps=hrp, layer_num=n, blocks=blocks_per_layer, norm=norm
             )
-            graph = SteerableMessagePassing(
-                update_fn=update_fn,
-                message_fn=message_fn,
-                aggregate_messages_fn=jraph.segment_sum,
-            )(graph)
+            # NOTE node_attributes, edge_attributes and additional_message_features
+            #  are never updated within the message passing layers
+            st_graph = st_graph._replace(
+                graph=jraph.GraphNetwork(
+                    update_node_fn=Partial(update_fn, st_graph.node_attributes),
+                    update_edge_fn=Partial(
+                        message_fn,
+                        st_graph.edge_attributes,
+                        st_graph.additional_message_features,
+                    ),
+                    aggregate_edges_for_nodes_fn=jraph.segment_sum,
+                )(st_graph.graph)
+            )
 
         # decoder
         nodes = SEDecoder(
@@ -199,7 +209,7 @@ def SEGNN(
             output_irreps=output_irreps,
             task=task,
             pool=pool,
-        )(graph)
+        )(st_graph)
 
         return nodes.array
 

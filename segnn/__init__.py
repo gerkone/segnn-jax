@@ -1,5 +1,5 @@
 from .blocks import O3TensorProduct, O3TensorProductGate
-from .graphs import SteerableGraphsTuple
+from .graph_utils import SteerableGraphsTuple
 from .irreps_computer import balanced_irreps, weight_balanced_irreps
 from .segnn import SEGNN, SEGNNLayer
 

@@ -6,14 +6,14 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
-from jraph import segment_mean
+from jraph import GraphsTuple, segment_mean
 
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from segnn import SteerableGraphsTuple
 
 
 def knn_edges(loc: jnp.array, k: int, n_nodes: int):
-    """Returns the k-shortest edges in each batch."""
+    """Naive k-shortest edges (for each batch)."""
 
     @partial(jax.jit, static_argnames=["k"])
     def top_k_linear(loc: jnp.array, k: int) -> jnp.array:
@@ -46,17 +46,18 @@ def O3Transform(
     attribute_irreps = Irreps.spherical_harmonics(lmax_attributes)
 
     def _o3_transform(
-        graph: SteerableGraphsTuple,
+        st_graph: SteerableGraphsTuple,
         loc: jnp.ndarray,
         vel: jnp.ndarray,
         charges: jnp.ndarray,
     ) -> SteerableGraphsTuple:
 
+        graph = st_graph.graph
         prod_charges = charges[graph.senders] * charges[graph.receivers]
         rel_pos = loc[graph.senders] - loc[graph.receivers]
         edge_dist = jnp.sqrt(jnp.power(rel_pos, 2).sum(1, keepdims=True))
-        # NOTE additional_message_features is the same as edges in this implementation
-        edges = IrrepsArray(
+
+        msg_features = IrrepsArray(
             edge_features_irreps,
             jnp.concatenate((edge_dist, prod_charges), axis=-1),
         )
@@ -85,18 +86,22 @@ def O3Transform(
             + vel_embedding
         )
 
+        # scalar attribute to 1 by default
         node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
 
         return SteerableGraphsTuple(
-            nodes=nodes,
-            edges=edges,
+            graph=GraphsTuple(
+                nodes=nodes,
+                edges=None,
+                senders=graph.senders,
+                receivers=graph.receivers,
+                n_node=graph.n_node,
+                n_edge=graph.n_edge,
+                globals=graph.globals,
+            ),
             node_attributes=node_attributes,
             edge_attributes=edge_attributes,
-            senders=graph.senders,
-            receivers=graph.receivers,
-            n_node=graph.n_node,
-            n_edge=graph.n_edge,
-            globals=graph.globals,
+            additional_message_features=msg_features,
         )
 
     return _o3_transform
@@ -145,18 +150,23 @@ class NbodyGraphDataloader:
                 edge_indices = knn_edges(loc, self._neighbours, self._n_nodes)
                 senders, receivers = edge_indices[0], edge_indices[1]
 
-            graph = SteerableGraphsTuple(
-                senders=senders,
-                receivers=receivers,
-                n_node=jnp.array([self._n_nodes] * cur_batch),
-                n_edge=jnp.array([len(senders) // cur_batch] * cur_batch),
+            st_graph = SteerableGraphsTuple(
+                graph=GraphsTuple(
+                    nodes=None,
+                    edges=None,
+                    senders=senders,
+                    receivers=receivers,
+                    n_node=jnp.array([self._n_nodes] * cur_batch),
+                    n_edge=jnp.array([len(senders) // cur_batch] * cur_batch),
+                    globals=None,
+                )
             )
-            graph = self._transform(graph, loc, vel, q)
+            st_graph = self._transform(st_graph, loc, vel, q)
             # relative shift as target
             if self._dataset_type == "charged":
                 targets = targets - loc
             i += cur_batch
-            yield graph, targets
+            yield st_graph, targets
 
     def __len__(self) -> int:
         return floor(self.n_batches) if self._drop_last else round(self.n_batches)
