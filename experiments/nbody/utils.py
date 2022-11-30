@@ -1,13 +1,40 @@
 from math import floor
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import jax.tree_util as tree
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
+from jax import random
 from jraph import GraphsTuple, segment_mean
+from pcdiff import knn_graph
 
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from segnn import SteerableGraphsTuple
+
+key = random.PRNGKey(0)
+
+
+def knn_graph_batched(
+    loc: jnp.ndarray, k: int, n_nodes: int, batch_size: int
+) -> jnp.ndarray:
+    """Slow and inefficient numpy version of torch.knn_graph"""
+
+    def _shifted_knn(
+        loc_slice: jnp.ndarray, shift: int
+    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # k + 1 to ignore self reference
+        edge_slice = knn_graph(loc_slice, k + 1)
+        return (
+            jnp.array(edge_slice[0])[1:] + shift,
+            jnp.array(edge_slice[1])[1:] + shift,
+        )
+
+    return jnp.hstack(
+        [
+            _shifted_knn(loc[i : i + n_nodes], i)
+            for i in range(0, batch_size * n_nodes, n_nodes)
+        ]
+    )
 
 
 def O3Transform(
@@ -91,6 +118,8 @@ class NbodyGraphDataloader:
         drop_last: bool = False,
         transform: Optional[Callable] = None,
         neighbours: Optional[int] = 1,
+        shuffle: bool = False,
+        relative_target: bool = False,
     ):
         self.dataset = dataset
         self.batch_size = batch_size
@@ -98,17 +127,23 @@ class NbodyGraphDataloader:
         self._drop_last = drop_last
         self._dataset_type = dataset_type
         self._neighbours = neighbours
+        self._shuffle = shuffle
+        self._relative_target = relative_target
 
         self._transform = transform
 
     def __iter__(self):
         i = 0
+
+        indices = jnp.arange(len(self.dataset))
+
+        if self._shuffle:
+            indices = random.permutation(key, indices, independent=True)
+
         if self._dataset_type == "charged":
             edge_indices = self.dataset.get_edges(self.batch_size, self._n_nodes)
             senders, receivers = edge_indices[0], edge_indices[1]
-        elif self._dataset_type == "gravity":
-            from pcdiff import knn_graph
-        while i < len(self.dataset):
+        while i < len(indices):
             cur_batch = min(self.batch_size, len(self.dataset) - i)
 
             if cur_batch < self.batch_size and self._drop_last:
@@ -119,13 +154,15 @@ class NbodyGraphDataloader:
                 edge_indices = self.dataset.get_edges(cur_batch, self._n_nodes)
                 senders, receivers = edge_indices[0], edge_indices[1]
 
-            loc, vel, _, q, targets = self.dataset[i : (i + cur_batch)]
+            loc, vel, _, q, targets = self.dataset[indices[i : (i + cur_batch)]]
 
             if self._dataset_type == "gravity":
-                edge_indices = knn_graph(loc, self._neighbours)
-                senders, receivers = jnp.array(edge_indices[0]), jnp.array(
-                    edge_indices[1]
+                edge_indices = knn_graph_batched(
+                    loc, self._neighbours, self._n_nodes, cur_batch
                 )
+                # switched by default
+                senders = jnp.array(edge_indices[1])
+                receivers = jnp.array(edge_indices[0])
 
             st_graph = SteerableGraphsTuple(
                 graph=GraphsTuple(
@@ -140,17 +177,14 @@ class NbodyGraphDataloader:
             )
             st_graph = self._transform(st_graph, loc, vel, q)
             # relative shift as target
-            if self._dataset_type == "charged":
+            if self._relative_target:
                 targets = targets - loc
             i += cur_batch
             yield st_graph, targets
 
     def __len__(self) -> int:
-        return floor(self.n_batches) if self._drop_last else round(self.n_batches)
-
-    @property
-    def n_batches(self) -> float:
-        return len(self.dataset) / self.batch_size
+        n_batches = len(self.dataset) / self.batch_size
+        return floor(n_batches) if self._drop_last else round(n_batches)
 
 
 def setup_nbody_data(args):
