@@ -39,9 +39,14 @@ def SEDecoder(
                 nodes, st_graph.node_attributes, latent_irreps, name=f"prepool_{i}"
             )
 
+        if task == "node":
+            nodes = O3TensorProduct(
+                nodes, st_graph.node_attributes, output_irreps, name="output"
+            )
+
         if task == "graph":
             # pool over graph
-            pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup().irreps
+            pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
             nodes = O3TensorProduct(
                 nodes, st_graph.node_attributes, pooled_irreps, name=f"prepool_{blocks}"
             )
@@ -51,18 +56,16 @@ def SEDecoder(
                 pool_fn = jraph.segment_mean
             if pool == "sum":
                 pool_fn = jraph.segment_sum
-            nodes_to_graph, n_graphs = batched_graph_nodes(st_graph.graph)
-            nodes = pooling(st_graph, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
 
-            # post pool
+            nodes_to_graph, n_graphs = batched_graph_nodes(st_graph.graph)
+            nodes = pooling(nodes, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
+
+            # post pool mlp (not steerable)
             for i in range(blocks):
                 nodes = O3TensorProductGate(
-                    nodes, st_graph.node_attributes, latent_irreps, name=f"postpool_{i}"
+                    nodes, None, pooled_irreps, name=f"postpool_{i}"
                 )
-
-        nodes = O3TensorProduct(
-            nodes, st_graph.node_attributes, output_irreps, name="output"
-        )
+            nodes = O3TensorProduct(nodes, None, output_irreps, name="output")
 
         return nodes
 
@@ -92,7 +95,7 @@ def SEGNNLayer(
     def _message(
         edge_attribute: e3nn.IrrepsArray,
         additional_message_features: e3nn.IrrepsArray,
-        edge_features: e3nn.IrrepsArray,
+        edge_features: Any,
         incoming: e3nn.IrrepsArray,
         outgoing: e3nn.IrrepsArray,
         globals_: Any,

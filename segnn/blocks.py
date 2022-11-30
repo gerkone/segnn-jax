@@ -3,13 +3,14 @@ from typing import Callable, Optional
 
 import e3nn_jax as e3nn
 import jax
+import jax.numpy as jnp
 
 from .graph_utils import SteerableGraphsTuple
 
 
 def O3TensorProduct(
     x: e3nn.IrrepsArray,
-    y: e3nn.IrrepsArray,
+    y: Optional[e3nn.IrrepsArray],
     output_irreps: e3nn.Irreps,
     biases: bool = True,
     name: Optional[str] = None,
@@ -18,7 +19,7 @@ def O3TensorProduct(
 
     Args:
         x (IrrepsArray): Left tensor
-        y (IrrepsArray): Right tensor
+        y (IrrepsArray): Right tensor. If None it defaults to np.ones.
         output_irreps: Output representation
         biases: Specifies tu use biases
         name: Name of the linear layer params
@@ -26,6 +27,10 @@ def O3TensorProduct(
     Returns:
         The output to the weighted tensor product (IrrepsArray).
     """
+
+    if not y:
+        y = e3nn.IrrepsArray("1x0e", jnp.ones((x.shape[0], 1)))
+
     if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
         warnings.warn(
             f"The specified output irreps ({output_irreps}) are not scalars but "

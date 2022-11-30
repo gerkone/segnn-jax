@@ -24,9 +24,11 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         dataset_train,
         args.dataset,
         args.batch_size,
-        drop_last=False,
+        drop_last=True,
         transform=o3_transform,
         neighbours=args.neighbours if args.dataset == "gravity" else None,
+        shuffle=True,
+        relative_target=(args.target == "pos"),
     )
     loader_val = NbodyGraphDataloader(
         dataset_val,
@@ -35,6 +37,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         drop_last=True,
         transform=o3_transform,
         neighbours=args.neighbours if args.dataset == "gravity" else None,
+        shuffle=False,
+        relative_target=(args.target == "pos"),
     )
     loader_test = NbodyGraphDataloader(
         dataset_test,
@@ -43,6 +47,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         drop_last=True,
         transform=o3_transform,
         neighbours=args.neighbours if args.dataset == "gravity" else None,
+        shuffle=False,
+        relative_target=(args.target == "pos"),
     )
 
     print("Jitting...")
@@ -65,7 +71,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         target: jnp.ndarray,
     ) -> float:
         pred, _ = predict(params, state, graph)
-        return (jnp.square(pred - target)).mean()
+        return jnp.mean(jnp.square(pred - target))
 
     @jax.jit
     def update(
@@ -90,10 +96,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
                 params, segnn_state, graph, target, opt_state
             )
             train_loss += loss
-        train_time = (
-            (time.perf_counter_ns() - train_start) / 1e6 / loader_train.n_batches
-        )
-        train_loss /= loader_train.n_batches
+        train_time = (time.perf_counter_ns() - train_start) / 1e6 / len(loader_train)
+        train_loss /= len(loader_train)
         wandb_logs = {"train_loss": train_loss, "update_time": train_time}
         print(
             "[Epoch {:>4}] training loss {:.6f}, update time {:.3f}ms".format(
@@ -108,11 +112,9 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
                 val_loss += jax.lax.stop_gradient(
                     mse(params, segnn_state, graph, target)
                 )
-            eval_time = (
-                (time.perf_counter_ns() - eval_start) / 1e6 / loader_val.n_batches
-            )
+            eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / len(loader_val)
             avg_time.append(eval_time)
-            val_loss /= loader_val.n_batches
+            val_loss /= len(loader_val)
             wandb_logs.update({"val_loss": val_loss, "eval_time": eval_time})
             print(
                 " - validation loss {:.6f}, eval time {:.3f}ms ({} graph batch)".format(
@@ -127,7 +129,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
     test_loss = 0
     for graph, target in loader_test:
         test_loss += jax.lax.stop_gradient(mse(params, segnn_state, graph, target))
-    test_loss /= loader_test.n_batches
+    test_loss /= len(loader_test)
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
         wandb.log({"test_loss": test_loss, "avg_eval_time": avg_time})
@@ -215,6 +217,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--blocks", type=int, default=2, help="Number of layers in steerable MLPs."
     )
+    parser.add_argument(
+        "--double-precision",
+        action="store_true",
+        help="Use double precision in model",
+    )
     # TODO instance norm
     parser.add_argument(
         "--norm",
@@ -265,6 +272,9 @@ if __name__ == "__main__":
             entity=args.wandb_entity,
         )
 
+    # NOTE set jax in double precision
+    jax.config.update("jax_enable_x64", args.double_precision)
+
     # Create hidden irreps
     hidden_irreps = weight_balanced_irreps(
         scalar_units=args.units,
@@ -293,7 +303,9 @@ if __name__ == "__main__":
             n_bodies=args.n_bodies,
         )
         dataset_val = ChargedDataset(
-            partition="val", dataset_name=args.dataset_name, n_bodies=args.n_bodies
+            partition="val",
+            dataset_name=args.dataset_name,
+            n_bodies=args.n_bodies,
         )
         dataset_test = ChargedDataset(
             partition="test",
