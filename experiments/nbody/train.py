@@ -7,52 +7,50 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
+from torch.utils.data.dataloader import DataLoader
 
 import wandb
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
-from experiments.nbody.utils import NbodyGraphDataloader, O3Transform
+from experiments.nbody.utils import GraphTransform, O3Transform, numpy_collate
 from segnn import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
 key = jax.random.PRNGKey(0)
 
 
 def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args):
-    # load data
+    # data loading and postprocessing
     o3_transform = O3Transform(args.node_irreps, args.edge_irreps, args.lmax_attributes)
+    graph_transform = GraphTransform(
+        transform=o3_transform,
+        neighbours=args.neighbours,
+        relative_target=(args.target == "pos"),
+    )
 
-    loader_train = NbodyGraphDataloader(
+    loader_train = DataLoader(
         dataset_train,
-        args.dataset,
-        args.batch_size,
-        drop_last=True,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
+        batch_size=args.batch_size,
         shuffle=True,
-        relative_target=(args.target == "pos"),
+        drop_last=True,
+        collate_fn=numpy_collate,
     )
-    loader_val = NbodyGraphDataloader(
+    loader_val = DataLoader(
         dataset_val,
-        args.dataset,
-        args.batch_size,
-        drop_last=True,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
+        batch_size=args.batch_size,
         shuffle=False,
-        relative_target=(args.target == "pos"),
+        drop_last=True,
+        collate_fn=numpy_collate,
     )
-    loader_test = NbodyGraphDataloader(
+    loader_test = DataLoader(
         dataset_test,
-        args.dataset,
-        args.batch_size,
-        drop_last=True,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
+        batch_size=args.batch_size,
         shuffle=False,
-        relative_target=(args.target == "pos"),
+        drop_last=True,
+        collate_fn=numpy_collate,
     )
 
     print("Jitting...")
-    params, segnn_state = segnn.init(key, next(iter(loader_train))[0])
+    init_graph, _ = graph_transform(dataset_train, next(iter(loader_train)))
+    params, segnn_state = segnn.init(key, init_graph)
     opt_init, opt_update = optax.adamw(
         learning_rate=args.lr, weight_decay=args.weight_decay
     )
@@ -91,7 +89,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
     for e in range(args.epochs):
         train_loss = 0
         train_start = time.perf_counter_ns()
-        for graph, target in loader_train:
+        for data in loader_train:
+            graph, target = graph_transform(dataset_train, data)
             loss, params, opt_state = update(
                 params, segnn_state, graph, target, opt_state
             )
@@ -108,7 +107,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         if e % args.val_freq == 0:
             val_loss = 0
             eval_start = time.perf_counter_ns()
-            for graph, target in loader_val:
+            for data in loader_val:
+                graph, target = graph_transform(dataset_val, data)
                 val_loss += jax.lax.stop_gradient(
                     mse(params, segnn_state, graph, target)
                 )
@@ -127,7 +127,8 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
             wandb.log(wandb_logs)
 
     test_loss = 0
-    for graph, target in loader_test:
+    for data in loader_test:
+        graph, target = graph_transform(dataset_test, data)
         test_loss += jax.lax.stop_gradient(mse(params, segnn_state, graph, target))
     test_loss /= len(loader_test)
     avg_time = sum(avg_time) / len(avg_time)

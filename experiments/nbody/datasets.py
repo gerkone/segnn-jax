@@ -24,11 +24,9 @@ class BaseDataset(ABC):
         else:
             self.suffix = self.partition
         self.dataset_name = dataset_name
-
         self.suffix += f"_{data_type}{n_bodies}_initvel1"
-
+        self.data_type = data_type
         self.max_samples = int(max_samples)
-
         self.normalize = normalize
 
     def get_n_nodes(self):
