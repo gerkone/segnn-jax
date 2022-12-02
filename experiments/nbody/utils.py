@@ -1,40 +1,18 @@
-from math import floor
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import jax.numpy as jnp
 import jax.tree_util as tree
+import numpy as np
+import torch
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
 from jax import random
 from jraph import GraphsTuple, segment_mean
-from pcdiff import knn_graph
+from torch_geometric.nn import knn_graph
 
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
 from segnn import SteerableGraphsTuple
 
 key = random.PRNGKey(0)
-
-
-def knn_graph_batched(
-    loc: jnp.ndarray, k: int, n_nodes: int, batch_size: int
-) -> jnp.ndarray:
-    """Slow and inefficient numpy version of torch.knn_graph"""
-
-    def _shifted_knn(
-        loc_slice: jnp.ndarray, shift: int
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        # k + 1 to ignore self reference
-        edge_slice = knn_graph(loc_slice, k + 1)
-        return (
-            jnp.array(edge_slice[0])[1:] + shift,
-            jnp.array(edge_slice[1])[1:] + shift,
-        )
-
-    return jnp.hstack(
-        [
-            _shifted_knn(loc[i : i + n_nodes], i)
-            for i in range(0, batch_size * n_nodes, n_nodes)
-        ]
-    )
 
 
 def O3Transform(
@@ -107,152 +85,54 @@ def O3Transform(
     return _o3_transform
 
 
-class NbodyGraphDataloader:
-    """Dataloader for the N-body datasets, directly handles graph features and attributes."""
+def GraphTransform(
+    transform: Callable, neighbours: Optional[int] = 0, relative_target: bool = False
+) -> Callable:
+    def _to_steerable_graph(
+        dataset: Union[ChargedDataset, GravityDataset], data: List
+    ) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
 
-    def __init__(
-        self,
-        dataset: Union[ChargedDataset, GravityDataset],
-        dataset_type: str,
-        batch_size: int,
-        drop_last: bool = False,
-        transform: Optional[Callable] = None,
-        neighbours: Optional[int] = 1,
-        shuffle: bool = False,
-        relative_target: bool = False,
-    ):
-        self.dataset = dataset
-        self.batch_size = batch_size
-        self._n_nodes = self.dataset.get_n_nodes()
-        self._drop_last = drop_last
-        self._dataset_type = dataset_type
-        self._neighbours = neighbours
-        self._shuffle = shuffle
-        self._relative_target = relative_target
+        loc, vel, _, q, targets = data
 
-        self._transform = transform
+        n_nodes = dataset.get_n_nodes()
+        batch_size = int(len(data[0]) / n_nodes)
 
-    def __iter__(self):
-        i = 0
-
-        indices = jnp.arange(len(self.dataset))
-
-        if self._shuffle:
-            indices = random.permutation(key, indices, independent=True)
-
-        if self._dataset_type == "charged":
-            edge_indices = self.dataset.get_edges(self.batch_size, self._n_nodes)
+        if dataset.data_type == "charged":
+            edge_indices = dataset.get_edges(batch_size, n_nodes)
             senders, receivers = edge_indices[0], edge_indices[1]
-        while i < len(indices):
-            cur_batch = min(self.batch_size, len(self.dataset) - i)
+        if dataset.data_type == "gravity":
+            batch = torch.arange(0, batch_size)
+            batch = batch.repeat_interleave(n_nodes).long()
+            edge_indices = knn_graph(torch.from_numpy(np.array(loc)), neighbours, batch)
+            senders = jnp.array(edge_indices[0])
+            receivers = jnp.array(edge_indices[1])
 
-            if cur_batch < self.batch_size and self._drop_last:
-                break
-
-            if cur_batch < self.batch_size and self._dataset_type == "charged":
-                # recompute edges for truncated batch
-                edge_indices = self.dataset.get_edges(cur_batch, self._n_nodes)
-                senders, receivers = edge_indices[0], edge_indices[1]
-
-            loc, vel, _, q, targets = self.dataset[indices[i : (i + cur_batch)]]
-
-            if self._dataset_type == "gravity":
-                edge_indices = knn_graph_batched(
-                    loc, self._neighbours, self._n_nodes, cur_batch
-                )
-                # switched by default
-                senders = jnp.array(edge_indices[1])
-                receivers = jnp.array(edge_indices[0])
-
-            st_graph = SteerableGraphsTuple(
-                graph=GraphsTuple(
-                    nodes=None,
-                    edges=None,
-                    senders=senders,
-                    receivers=receivers,
-                    n_node=jnp.array([self._n_nodes] * cur_batch),
-                    n_edge=jnp.array([len(senders) // cur_batch] * cur_batch),
-                    globals=None,
-                )
+        st_graph = SteerableGraphsTuple(
+            graph=GraphsTuple(
+                nodes=None,
+                edges=None,
+                senders=senders,
+                receivers=receivers,
+                n_node=jnp.array([n_nodes] * batch_size),
+                n_edge=jnp.array([len(senders) // batch_size] * batch_size),
+                globals=None,
             )
-            st_graph = self._transform(st_graph, loc, vel, q)
-            # relative shift as target
-            if self._relative_target:
-                targets = targets - loc
-            i += cur_batch
-            yield st_graph, targets
-
-    def __len__(self) -> int:
-        n_batches = len(self.dataset) / self.batch_size
-        return floor(n_batches) if self._drop_last else round(n_batches)
-
-
-def setup_nbody_data(args):
-    if args.dataset == "charged":
-        dataset_train = ChargedDataset(
-            partition="train",
-            dataset_name=args.dataset_partition,
-            max_samples=args.max_samples,
-            n_bodies=args.n_bodies,
         )
-        dataset_val = ChargedDataset(
-            partition="val", dataset_name=args.dataset_partition, n_bodies=args.n_bodies
-        )
-        dataset_test = ChargedDataset(
-            partition="test",
-            dataset_name=args.dataset_partition,
-            n_bodies=args.n_bodies,
-        )
+        st_graph = transform(st_graph, loc, vel, q)
+        # relative shift as target
+        if relative_target:
+            targets = targets - loc
 
-    if args.dataset == "gravity":
-        dataset_train = GravityDataset(
-            partition="train",
-            dataset_name=args.dataset_partition,
-            max_samples=args.max_samples,
-            neighbours=args.neighbours,
-            target=args.target,
-            n_bodies=args.n_bodies,
-        )
-        dataset_val = GravityDataset(
-            partition="val",
-            dataset_name=args.dataset_partition,
-            neighbours=args.neighbours,
-            target=args.target,
-            n_bodies=args.n_bodies,
-        )
-        dataset_test = GravityDataset(
-            partition="test",
-            dataset_name=args.dataset_partition,
-            neighbours=args.neighbours,
-            target=args.target,
-            n_bodies=args.n_bodies,
-        )
+        return st_graph, targets
 
-    o3_transform = O3Transform(args.node_irreps, args.edge_irreps, args.lmax_attributes)
+    return _to_steerable_graph
 
-    loader_train = NbodyGraphDataloader(
-        dataset_train,
-        args.dataset,
-        args.batch_size,
-        drop_last=False,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
-    )
-    loader_val = NbodyGraphDataloader(
-        dataset_val,
-        args.dataset,
-        args.batch_size,
-        drop_last=True,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
-    )
-    loader_test = NbodyGraphDataloader(
-        dataset_test,
-        args.dataset,
-        args.batch_size,
-        drop_last=True,
-        transform=o3_transform,
-        neighbours=args.neighbours if args.dataset == "gravity" else None,
-    )
 
-    return loader_train, loader_val, loader_test
+def numpy_collate(batch):
+    if isinstance(batch[0], np.ndarray):
+        return jnp.vstack(batch)
+    elif isinstance(batch[0], (tuple, list)):
+        transposed = zip(*batch)
+        return [numpy_collate(samples) for samples in transposed]
+    else:
+        return jnp.array(batch)
