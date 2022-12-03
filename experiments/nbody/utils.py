@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple
 
 import jax.numpy as jnp
 import jax.tree_util as tree
@@ -7,6 +7,7 @@ import torch
 from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
 from jax import random
 from jraph import GraphsTuple, segment_mean
+from torch.utils.data import DataLoader
 from torch_geometric.nn import knn_graph
 
 from experiments.nbody.datasets import ChargedDataset, GravityDataset
@@ -85,23 +86,40 @@ def O3Transform(
     return _o3_transform
 
 
-def GraphTransform(
-    transform: Callable, neighbours: Optional[int] = 0, relative_target: bool = False
+def NbodyGraphTransform(
+    transform: Callable,
+    data_type: str,
+    n_nodes: int,
+    batch_size: int,
+    neighbours: Optional[int] = 0,
+    relative_target: bool = False,
 ) -> Callable:
-    def _to_steerable_graph(
-        dataset: Union[ChargedDataset, GravityDataset], data: List
-    ) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
+    """
+    Build a function that converts torch DataBatch into SteerableGraphsTuple.
+    """
+
+    if data_type == "charged":
+        # charged system is a connected graph
+        full_edge_indices = [
+            (i + n_nodes * b, j + n_nodes * b)
+            for b in range(batch_size)
+            for i in range(n_nodes)
+            for j in range(n_nodes)
+            if i != j
+        ]
+        full_edge_indices = np.array(full_edge_indices).T
+
+    def _to_steerable_graph(data: List) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
 
         loc, vel, _, q, targets = data
 
-        n_nodes = dataset.get_n_nodes()
-        batch_size = int(len(data[0]) / n_nodes)
+        cur_batch = int(loc.shape[0] / n_nodes)
 
-        if dataset.data_type == "charged":
-            edge_indices = dataset.get_edges(batch_size, n_nodes)
+        if data_type == "charged":
+            edge_indices = full_edge_indices[:, : n_nodes * (n_nodes - 1) * cur_batch]
             senders, receivers = edge_indices[0], edge_indices[1]
-        if dataset.data_type == "gravity":
-            batch = torch.arange(0, batch_size)
+        if data_type == "gravity":
+            batch = torch.arange(0, cur_batch)
             batch = batch.repeat_interleave(n_nodes).long()
             edge_indices = knn_graph(torch.from_numpy(np.array(loc)), neighbours, batch)
             senders = jnp.array(edge_indices[0])
@@ -113,8 +131,8 @@ def GraphTransform(
                 edges=None,
                 senders=senders,
                 receivers=receivers,
-                n_node=jnp.array([n_nodes] * batch_size),
-                n_edge=jnp.array([len(senders) // batch_size] * batch_size),
+                n_node=jnp.array([n_nodes] * cur_batch),
+                n_edge=jnp.array([len(senders) // cur_batch] * cur_batch),
                 globals=None,
             )
         )
@@ -136,3 +154,84 @@ def numpy_collate(batch):
         return [numpy_collate(samples) for samples in transposed]
     else:
         return jnp.array(batch)
+
+
+def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
+    if args.dataset == "charged":
+        dataset_train = ChargedDataset(
+            partition="train",
+            dataset_name=args.dataset_name,
+            max_samples=args.max_samples,
+            n_bodies=args.n_bodies,
+        )
+        dataset_val = ChargedDataset(
+            partition="val",
+            dataset_name=args.dataset_name,
+            n_bodies=args.n_bodies,
+        )
+        dataset_test = ChargedDataset(
+            partition="test",
+            dataset_name=args.dataset_name,
+            n_bodies=args.n_bodies,
+        )
+
+    if args.dataset == "gravity":
+        dataset_train = GravityDataset(
+            partition="train",
+            dataset_name=args.dataset_name,
+            max_samples=args.max_samples,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+        dataset_val = GravityDataset(
+            partition="val",
+            dataset_name=args.dataset_name,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+        dataset_test = GravityDataset(
+            partition="test",
+            dataset_name=args.dataset_name,
+            neighbours=args.neighbours,
+            target=args.target,
+            n_bodies=args.n_bodies,
+        )
+
+    # data loading and postprocessing
+    o3_transform = O3Transform(
+        args.node_irreps, args.additional_message_irreps, args.lmax_attributes
+    )
+    graph_transform = NbodyGraphTransform(
+        transform=o3_transform,
+        n_nodes=args.n_bodies,
+        batch_size=args.batch_size,
+        neighbours=args.neighbours,
+        relative_target=(args.target == "pos"),
+        data_type=args.dataset,
+    )
+
+    loader_train = DataLoader(
+        dataset_train,
+        batch_size=args.batch_size,
+        shuffle=True,
+        drop_last=True,
+        collate_fn=numpy_collate,
+    )
+    loader_val = DataLoader(
+        dataset_val,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
+        collate_fn=numpy_collate,
+    )
+    loader_test = DataLoader(
+        dataset_test,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
+        collate_fn=numpy_collate,
+    )
+
+    return loader_train, loader_val, loader_test, graph_transform

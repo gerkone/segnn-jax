@@ -67,25 +67,25 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
     dataset_train = QM9(
         "datasets",
         args.target,
-        2,
-        "train",
-        args.lmax_attributes,
+        args.radius,
+        partition="train",
+        lmax_attr=args.lmax_attributes,
         feature_type=args.feature_type,
     )
     dataset_val = QM9(
         "datasets",
         args.target,
-        2,
-        "valid",
-        args.lmax_attributes,
+        args.radius,
+        partition="valid",
+        lmax_attr=args.lmax_attributes,
         feature_type=args.feature_type,
     )
     dataset_test = QM9(
         "datasets",
         args.target,
-        2,
-        "test",
-        args.lmax_attributes,
+        args.radius,
+        partition="test",
+        lmax_attr=args.lmax_attributes,
         feature_type=args.feature_type,
     )
 
@@ -102,7 +102,7 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
 
     to_graphs_tuple = QM9GraphTransform(
         args.node_irreps,
-        args.edge_irreps,
+        args.additional_message_irreps,
         args.lmax_attributes,
         max_batch_nodes=int(
             max(

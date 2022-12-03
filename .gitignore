@@ -1,6 +1,7 @@
 .vscode
 __pycache__
 *.npy
+*.pyc
 venv
 wandb
 nohup.out
