@@ -1,6 +1,6 @@
 import argparse
 import time
-from typing import Any, Tuple
+from typing import Any, Tuple, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
@@ -17,9 +17,14 @@ key = jax.random.PRNGKey(0)
 
 @jax.jit
 def predict(
-    params: hk.Params, state: hk.State, graph: SteerableGraphsTuple
+    params: hk.Params,
+    state: hk.State,
+    graph: SteerableGraphsTuple,
+    mean_shift: Union[jnp.array, float] = 0,
+    mad_shift: Union[jnp.array, float] = 1,
 ) -> Tuple[jnp.ndarray, hk.State]:
-    return segnn.apply(params, state, graph)
+    pred, state = segnn.apply(params, state, graph)
+    return jnp.divide(pred - mean_shift, mad_shift), state
 
 
 @jax.jit
@@ -28,8 +33,10 @@ def mae(
     state: hk.State,
     graph: SteerableGraphsTuple,
     target: jnp.ndarray,
+    mean_shift: Union[jnp.array, float] = 0,
+    mad_shift: Union[jnp.array, float] = 1,
 ) -> float:
-    pred, _ = predict(params, state, graph)
+    pred, _ = predict(params, state, graph, mean_shift, mad_shift)
     return (jnp.abs(pred - target)).mean()
 
 
@@ -39,8 +46,10 @@ def mse(
     state: hk.State,
     graph: SteerableGraphsTuple,
     target: jnp.ndarray,
+    mean_shift: Union[jnp.array, float] = 0,
+    mad_shift: Union[jnp.array, float] = 1,
 ) -> float:
-    pred, _ = predict(params, state, graph)
+    pred, _ = predict(params, state, graph, mean_shift, mad_shift)
     return (jnp.power(pred - target, 2)).mean()
 
 
@@ -57,8 +66,12 @@ def train(
     )
 
     if args.dataset == "qm9":
+        # for target normalization
+        target_mean, target_mad = loader_train.dataset.calc_stats()
         loss_fn = mae
     else:
+        # no normalization for nbody
+        target_mean, target_mad = 0, 1
         loss_fn = mse
 
     @jax.jit
@@ -81,6 +94,7 @@ def train(
         train_start = time.perf_counter_ns()
         for data in loader_train:
             graph, target = graph_transform(data)
+            target = jnp.divide(target - target_mean, target_mad)
             loss, params, opt_state = update(
                 params, segnn_state, graph, target, opt_state
             )
@@ -89,8 +103,11 @@ def train(
         train_loss /= len(loader_train)
         wandb_logs = {"train_loss": train_loss, "update_time": train_time}
         print(
-            "[Epoch {:>4}] training loss {:.6f}, update time {:.3f}ms".format(
-                e + 1, train_loss, train_time
+            "[Epoch {:>4}] training loss {:.6f} {}, update time {:.3f}ms".format(
+                e + 1,
+                train_loss,
+                ("(normalized)" if args.dataset == "qm9" else ""),
+                train_time,
             ),
             end="",
         )
@@ -100,7 +117,7 @@ def train(
             for data in loader_val:
                 graph, target = graph_transform(data)
                 val_loss += jax.lax.stop_gradient(
-                    loss_fn(params, segnn_state, graph, target)
+                    loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
                 )
             eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / len(loader_val)
             avg_time.append(eval_time)
@@ -119,7 +136,9 @@ def train(
     test_loss = 0
     for data in loader_test:
         graph, target = graph_transform(data)
-        test_loss += jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
+        test_loss += jax.lax.stop_gradient(
+            loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
+        )
     test_loss /= len(loader_test)
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
