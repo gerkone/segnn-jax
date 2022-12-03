@@ -7,69 +7,59 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
-from torch_geometric.loader import DataLoader
-
 import wandb
-from experiments.qm9.dataset import QM9
-from segnn import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
-from .utils import QM9GraphTransform
+from experiments import setup_datasets
+from segnn import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
 key = jax.random.PRNGKey(0)
 
 
-def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args):
-    # load data
-    loader_train = DataLoader(dataset_train, batch_size=args.batch_size, shuffle=True)
-    loader_val = DataLoader(dataset_val, batch_size=args.batch_size, shuffle=True)
-    loader_test = DataLoader(dataset_test, batch_size=args.batch_size, shuffle=True)
+@jax.jit
+def predict(
+    params: hk.Params, state: hk.State, graph: SteerableGraphsTuple
+) -> Tuple[jnp.ndarray, hk.State]:
+    return segnn.apply(params, state, graph)
 
-    to_graphs_tuple = QM9GraphTransform(
-        args.node_irreps,
-        args.edge_irreps,
-        args.lmax_attributes,
-        max_batch_nodes=int(
-            max(
-                [
-                    sum(d.top_n_nodes(args.batch_size))
-                    for d in [dataset_train, dataset_val, dataset_test]
-                ]
-            )
-            * 0.7
-        ),
-        max_batch_edges=int(
-            max(
-                [
-                    sum(d.top_n_edges(args.batch_size))
-                    for d in [dataset_train, dataset_val, dataset_test]
-                ]
-            )
-            * 0.7
-        ),
-    )
+
+@jax.jit
+def mae(
+    params: hk.Params,
+    state: hk.State,
+    graph: SteerableGraphsTuple,
+    target: jnp.ndarray,
+) -> float:
+    pred, _ = predict(params, state, graph)
+    return (jnp.abs(pred - target)).mean()
+
+
+@jax.jit
+def mse(
+    params: hk.Params,
+    state: hk.State,
+    graph: SteerableGraphsTuple,
+    target: jnp.ndarray,
+) -> float:
+    pred, _ = predict(params, state, graph)
+    return (jnp.power(pred - target, 2)).mean()
+
+
+def train(
+    segnn: hk.Transformed, loader_train, loader_val, loader_test, graph_transform, args
+):
+    print(f"Starting {args.epochs} epochs on {args.dataset}.")
 
     print("Jitting...")
-    init_graph, _ = to_graphs_tuple(next(iter(loader_train)))
+    init_graph, _ = graph_transform(next(iter(loader_train)))
     params, segnn_state = segnn.init(key, init_graph)
     opt_init, opt_update = optax.adamw(
         learning_rate=args.lr, weight_decay=args.weight_decay
     )
 
-    @jax.jit
-    def predict(
-        params: hk.Params, state: hk.State, graph: SteerableGraphsTuple
-    ) -> Tuple[jnp.ndarray, hk.State]:
-        return segnn.apply(params, state, graph)
-
-    @jax.jit
-    def mae(
-        params: hk.Params,
-        state: hk.State,
-        graph: SteerableGraphsTuple,
-        target: jnp.ndarray,
-    ) -> float:
-        pred, _ = predict(params, state, graph)
-        return (jnp.abs(pred - target)).mean()
+    if args.dataset == "qm9":
+        loss_fn = mae
+    else:
+        loss_fn = mse
 
     @jax.jit
     def update(
@@ -79,7 +69,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         target: jnp.ndarray,
         opt_state,
     ) -> Tuple[float, hk.Params, Any]:
-        loss, grads = jax.value_and_grad(mae)(params, state, graph, target)
+        loss, grads = jax.value_and_grad(loss_fn)(params, state, graph, target)
         updates, opt_state = opt_update(grads, opt_state, params)
         return loss, optax.apply_updates(params, updates), opt_state
 
@@ -90,7 +80,7 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
         train_loss = 0
         train_start = time.perf_counter_ns()
         for data in loader_train:
-            graph, target = to_graphs_tuple(data)
+            graph, target = graph_transform(data)
             loss, params, opt_state = update(
                 params, segnn_state, graph, target, opt_state
             )
@@ -108,9 +98,9 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
             val_loss = 0
             eval_start = time.perf_counter_ns()
             for data in loader_val:
-                graph, target = to_graphs_tuple(data)
+                graph, target = graph_transform(data)
                 val_loss += jax.lax.stop_gradient(
-                    mae(params, segnn_state, graph, target)
+                    loss_fn(params, segnn_state, graph, target)
                 )
             eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / len(loader_val)
             avg_time.append(eval_time)
@@ -128,17 +118,15 @@ def train(segnn: hk.Transformed, dataset_train, dataset_val, dataset_test, args)
 
     test_loss = 0
     for data in loader_test:
-        graph, target = to_graphs_tuple(data)
-        test_loss += jax.lax.stop_gradient(mae(params, segnn_state, graph, target))
+        graph, target = graph_transform(data)
+        test_loss += jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
     test_loss /= len(loader_test)
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
         wandb.log({"test_loss": test_loss, "avg_eval_time": avg_time})
     print(
         "Training done. Test loss {:.6f} - "
-        "eval time {:.3f}ms (average, {} graph batch)".format(
-            test_loss, avg_time, args.batch_size
-        )
+        "average eval time {:.3f}ms".format(test_loss, avg_time)
     )
 
 
@@ -175,19 +163,45 @@ if __name__ == "__main__":
         help="Evaluation frequency (number of epochs)",
     )
 
-    # gravity parameters
+    # nbody parameters
     parser.add_argument(
         "--target",
         type=str,
         default="pos",
         help="Target. e.g. pos, force (gravity), alpha (qm9)",
     )
+    parser.add_argument(
+        "--neighbours",
+        type=int,
+        default=20,
+        help="Number of connected nearest neighbours",
+    )
+    parser.add_argument(
+        "--n-bodies",
+        type=int,
+        default=5,
+        help="Number of bodies in the dataset",
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default="small",
+        choices=["small", "default", "small_out_dist"],
+        help="Name of nbody data partition: default (200 steps), small (1000 steps)",
+    )
 
+    # qm9 parameters
+    parser.add_argument(
+        "--radius",
+        type=float,
+        default=2,
+        help="Radius (Angstrom) between which atoms to add links.",
+    )
     parser.add_argument(
         "--feature-type",
         type=str,
         default="one_hot",
-        choices=["one_hot", "cormorant"],
+        choices=["one_hot", "cormorant", "gilmer"],
         help="Type of input feature",
     )
 
@@ -217,8 +231,13 @@ if __name__ == "__main__":
         "--norm",
         type=str,
         default="batch",
-        choices=["instance", "batch"],
+        choices=["instance", "batch", "none"],
         help="Normalisation type",
+    )
+    parser.add_argument(
+        "--double-precision",
+        action="store_true",
+        help="Use double precision in model",
     )
 
     # wandb parameters
@@ -242,17 +261,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.feature_type == "one_hot":
-        args.node_irreps = e3nn.Irreps("5x0e")
-    elif args.feature_type == "cormorant":
-        args.node_irreps = e3nn.Irreps("15x0e")
-    elif args.feature_type == "gilmer":
-        args.node_irreps = e3nn.Irreps("11x0e")
-
-    output_irreps = e3nn.Irreps("1x0e")
-
-    args.edge_irreps = e3nn.Irreps("1x0e")
-
     # connect to wandb
     if args.wandb:
         wandb_name = "_".join(
@@ -270,6 +278,23 @@ if __name__ == "__main__":
             entity=args.wandb_entity,
         )
 
+    # feature representations
+    if args.dataset == "qm9":
+        task = "graph"
+        if args.feature_type == "one_hot":
+            args.node_irreps = e3nn.Irreps("5x0e")
+        elif args.feature_type == "cormorant":
+            args.node_irreps = e3nn.Irreps("15x0e")
+        elif args.feature_type == "gilmer":
+            args.node_irreps = e3nn.Irreps("11x0e")
+        args.output_irreps = e3nn.Irreps("1x0e")
+        args.additional_message_irreps = e3nn.Irreps("1x0e")
+    elif args.dataset in ["charged", "gravity"]:
+        task = "node"
+        args.node_irreps = e3nn.Irreps("2x1o + 1x0e")
+        args.output_irreps = e3nn.Irreps("1x1o")
+        args.additional_message_irreps = e3nn.Irreps("2x0e")
+
     # Create hidden irreps
     hidden_irreps = weight_balanced_irreps(
         scalar_units=args.units,
@@ -282,38 +307,15 @@ if __name__ == "__main__":
     # build model
     segnn = SEGNN(
         hidden_irreps=hidden_irreps,
-        output_irreps=output_irreps,
+        output_irreps=args.output_irreps,
         num_layers=args.layers,
-        task="graph",
+        task=task,
         pool="avg",
         blocks_per_layer=args.blocks,
         norm=args.norm,
     )
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
-    dataset_train = QM9(
-        "datasets",
-        args.target,
-        2,
-        "train",
-        args.lmax_attributes,
-        feature_type=args.feature_type,
-    )
-    dataset_val = QM9(
-        "datasets",
-        args.target,
-        2,
-        "valid",
-        args.lmax_attributes,
-        feature_type=args.feature_type,
-    )
-    dataset_test = QM9(
-        "datasets",
-        args.target,
-        2,
-        "test",
-        args.lmax_attributes,
-        feature_type=args.feature_type,
-    )
+    dataset_train, dataset_val, dataset_test, graph_transform = setup_datasets(args)
 
-    train(segnn, dataset_train, dataset_val, dataset_test, args)
+    train(segnn, dataset_train, dataset_val, dataset_test, graph_transform, args)

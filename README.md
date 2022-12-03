@@ -7,7 +7,7 @@ To install only the model requirements run
 python -m pip install -r requirements.txt
 ```
 
-The validation experiments are ported from the original implementation, so additionally `torch` and `torch_geometric` are needed.
+The validation experiments are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed.
 ```
 python -m pip install -r experiments/requirements.txt
 ```
@@ -69,11 +69,11 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
 ### Nbody
 #### Charged experiment
 ```
-python3 -u -m experiments.nbody.train --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
+python3 -u main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
 ```
 #### Gravity experiment
 ```
-python3 -u -m experiments.nbody.train --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
+python3 -u main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
 ```
 
 (configurations used in validation)
