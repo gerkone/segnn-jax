@@ -28,8 +28,8 @@ def SEDecoder(
         Decoded latent feature space to output space.
     """
 
-    assert task in ["node", "graph"]
-    assert pool in ["avg", "sum", "none", None]
+    assert task in ["node", "graph"], f"Unknown task {task}"
+    assert pool in ["avg", "sum", "none", None], f"Unknown pooling {pool}"
 
     def _ApplySEDecoder(st_graph: SteerableGraphsTuple):
         nodes = st_graph.graph.nodes
@@ -90,7 +90,7 @@ def SEGNNLayer(
         update mlps respectively.
     """
 
-    assert norm in ["batch", "instance", "none", None]
+    assert norm in ["batch", "instance", "none", None], f"Unknown normalization {norm}"
 
     def _message(
         edge_attribute: e3nn.IrrepsArray,
@@ -136,10 +136,10 @@ def SEGNNLayer(
         )
         # residual connection
         nodes += update
-        if norm == "batch":
-            nodes = e3nn.BatchNorm(irreps=output_irreps)(nodes)
-        if norm == "instance":
-            raise NotImplementedError("Instance norm not yet implemented")
+        if norm in ["batch", "instance"]:
+            nodes = e3nn.BatchNorm(irreps=output_irreps, instance=(norm == "instance"))(
+                nodes
+            )
         return nodes
 
     return _message, _update
