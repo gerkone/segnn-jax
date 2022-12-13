@@ -199,7 +199,6 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
             n_bodies=args.n_bodies,
         )
 
-    # data loading and postprocessing
     o3_transform = O3Transform(
         args.node_irreps, args.additional_message_irreps, args.lmax_attributes
     )

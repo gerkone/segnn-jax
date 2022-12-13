@@ -1,9 +1,16 @@
-from typing import Callable, Tuple
+from typing import Callable, List, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
 import jraph
-from torch_geometric.data import Data, DataLoader
+from torch.utils.data._utils import pin_memory
+from torch.utils.data.dataloader import (
+    _BaseDataLoaderIter,
+    _SingleProcessDataLoaderIter,
+)
+from torch_geometric.data import Data, Dataset
+from torch_geometric.data.data import BaseData
+from torch_geometric.loader import DataLoader
 
 from experiments.qm9.dataset import QM9
 from segnn import SteerableGraphsTuple
@@ -35,12 +42,12 @@ def QM9GraphTransform(
             globals=None,
         )
         # pad for jax static shapes
-        node_attr_pad = ((0, max_batch_nodes - jnp.sum(graph.n_node)), (0, 0))
-        edge_attr_pad = ((0, max_batch_edges - jnp.sum(graph.n_edge)), (0, 0))
+        node_attr_pad = ((0, max_batch_nodes - jnp.sum(graph.n_node) + 1), (0, 0))
+        edge_attr_pad = ((0, max_batch_edges - jnp.sum(graph.n_edge) + 1), (0, 0))
         graph = jraph.pad_with_graphs(
             graph,
-            n_node=max_batch_nodes,
-            n_edge=max_batch_edges,
+            n_node=max_batch_nodes + 1,
+            n_edge=max_batch_edges + 1,
             n_graph=graph.n_node.shape[0] + 1,
         )
         st_graph = SteerableGraphsTuple(
@@ -56,11 +63,67 @@ def QM9GraphTransform(
                 jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
             ),
         )
-        # account for pad in targets
+        # pad targets
         target = jnp.append(jnp.array(data.y), 0)
         return st_graph, target
 
     return _to_steerable_graph
+
+
+class TakeUntilIterator(_SingleProcessDataLoaderIter):
+    def __init__(self, loader):
+        super().__init__(loader)
+        self._max_nodes = loader.max_batch_nodes
+        self._max_edges = loader.max_batch_edges
+
+    def _next_data(self):
+        index = self._next_index()  # may raise StopIteration
+        while True:
+            data_ = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+            if (
+                data_.x.shape[0] > self._max_nodes
+                or data_.edge_index.shape[1] > self._max_edges
+            ):
+                break
+            data = data_
+            # TODO better condition and index steps
+            index.extend(self._next_index())
+        if self._pin_memory:
+            data = pin_memory.pin_memory(data, self._pin_memory_device)
+        return data
+
+
+class TakeUntilDataLoader(DataLoader):
+    """
+    Bad implementation of a dataloader that takes until a certain size.
+
+    Mostly here reduce the amount of padding a bit. Note that this can introduce a bias
+    towards larger molecules (as they fill the batches faster and count more towards
+    the loss), but speeds up the training so it's the default.
+    """
+
+    def __init__(
+        self,
+        max_batch_nodes: int,
+        max_batch_edges: int,
+        dataset: Union[Dataset, List[BaseData]],
+        batch_size: int = 1,
+        shuffle: bool = False,
+        follow_batch: Optional[List[str]] = None,
+        exclude_keys: Optional[List[str]] = None,
+        **kwargs,
+    ):
+        super().__init__(
+            dataset, batch_size, shuffle, follow_batch, exclude_keys, **kwargs
+        )
+        self.max_batch_nodes = max_batch_nodes
+        self.max_batch_edges = max_batch_edges
+
+    def _get_iterator(self) -> "_BaseDataLoaderIter":
+        if self.num_workers == 0:
+            return TakeUntilIterator(self)
+        else:
+            raise NotImplementedError
 
 
 def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
@@ -89,36 +152,52 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
         feature_type=args.feature_type,
     )
 
+    max_batch_nodes = int(
+        max(
+            sum(d.top_n_nodes(args.batch_size))
+            for d in [dataset_train, dataset_val, dataset_test]
+        )
+    )
+
+    max_batch_edges = int(
+        max(
+            sum(d.top_n_edges(args.batch_size))
+            for d in [dataset_train, dataset_val, dataset_test]
+        )
+    )
+
     # load data
-    loader_train = DataLoader(
-        dataset_train, batch_size=args.batch_size, shuffle=True, drop_last=True
+    # NOTE replace with normal DataLoader if slower training is ok
+    loader_train = TakeUntilDataLoader(
+        max_batch_nodes,
+        max_batch_edges,
+        dataset_train,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
     )
-    loader_val = DataLoader(
-        dataset_val, batch_size=args.batch_size, shuffle=False, drop_last=True
+    loader_val = TakeUntilDataLoader(
+        max_batch_nodes,
+        max_batch_edges,
+        dataset_val,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
     )
-    loader_test = DataLoader(
-        dataset_test, batch_size=args.batch_size, shuffle=False, drop_last=True
+    loader_test = TakeUntilDataLoader(
+        max_batch_nodes,
+        max_batch_edges,
+        dataset_test,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=True,
     )
 
     to_graphs_tuple = QM9GraphTransform(
         args.node_irreps,
         args.additional_message_irreps,
         args.lmax_attributes,
-        max_batch_nodes=int(
-            max(
-                [
-                    sum(d.top_n_nodes(args.batch_size))
-                    for d in [dataset_train, dataset_val, dataset_test]
-                ]
-            )
-        ),
-        max_batch_edges=int(
-            max(
-                [
-                    sum(d.top_n_edges(args.batch_size))
-                    for d in [dataset_train, dataset_val, dataset_test]
-                ]
-            )
-        ),
+        max_batch_nodes=max_batch_nodes,
+        max_batch_edges=max_batch_edges,
     )
     return loader_train, loader_val, loader_test, to_graphs_tuple

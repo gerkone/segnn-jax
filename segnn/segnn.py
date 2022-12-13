@@ -6,7 +6,7 @@ import jraph
 from jax.tree_util import Partial
 
 from .blocks import O3Embedding, O3TensorProduct, O3TensorProductGate
-from .graph_utils import SteerableGraphsTuple, batched_graph_nodes, pooling
+from .graph_utils import SteerableGraphsTuple, pooling
 
 
 def SEDecoder(
@@ -16,7 +16,7 @@ def SEDecoder(
     task: str = "graph",
     pool: Optional[str] = "avg",
 ):
-    r"""Steerable E(3) pooler and decoder.
+    """Steerable E(3) pooler and decoder.
 
     Args:
         latent_irreps: Representation from the previous block
@@ -57,8 +57,7 @@ def SEDecoder(
             if pool == "sum":
                 pool_fn = jraph.segment_sum
 
-            nodes_to_graph, n_graphs = batched_graph_nodes(st_graph.graph)
-            nodes = pooling(nodes, nodes_to_graph, n_graphs, aggregate_fn=pool_fn)
+            nodes = pooling(st_graph.graph._replace(nodes=nodes), aggregate_fn=pool_fn)
 
             # post pool mlp (not steerable)
             for i in range(blocks):
@@ -78,7 +77,7 @@ def SEGNNLayer(
     blocks: int = 2,
     norm: Optional[str] = None,
 ) -> Tuple[Callable, Callable]:
-    r"""Steerable E(3) equivariant layer
+    """Steerable E(3) equivariant layer
     Args:
         output_irreps: Layer output representation
         layer_num: Numbering of the layer
@@ -155,8 +154,7 @@ def SEGNN(
     blocks_per_layer: int = 2,
     embed_msg_features: bool = True,
 ):
-    r"""
-    Steerable E(3) equivariant network.
+    """Steerable E(3) equivariant network.
 
     Original paper https://arxiv.org/abs/2110.02905.
 
@@ -180,7 +178,6 @@ def SEGNN(
         hidden_irreps_units = hidden_irreps
 
     def _ApplySEGNN(st_graph: SteerableGraphsTuple) -> jnp.array:
-
         # embedding
         # NOTE edge embedding is not in the original paper but can get good results
         st_graph = O3Embedding(
@@ -214,6 +211,6 @@ def SEGNN(
             pool=pool,
         )(st_graph)
 
-        return nodes.array
+        return jnp.squeeze(nodes.array)
 
     return _ApplySEGNN

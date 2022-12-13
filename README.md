@@ -12,10 +12,12 @@ The validation experiments are adapted from the original implementation, so addi
 python -m pip install -r experiments/requirements.txt
 ```
 
-## Experiments and dataset
-The nbody (charged and gravity) and QM9 datasets are included for completeness from the original paper.
+## Experiments and datasets
+The N-body (charged and gravity) and QM9 datasets are included for completeness from the original paper.
 
-The first two need to be generated locally in the directory [experiments/nbody/data](experiments/nbody/data) with the commands
+QM9 is automatically downloaded and processed when running the respective experiment. Note that for QM9 the batch size is just for convenience and is not actually the number of graphs in the batch, as the batches are filled with molecules to reduce the padding graphs.
+
+The N-body datasets have to be generated locally from the directory [experiments/nbody/data](experiments/nbody/data)
 #### Charged dataset (5 bodies, 10000 training samples)
 ```
 python3 -u generate_dataset.py --simulation=charged
@@ -24,13 +26,12 @@ python3 -u generate_dataset.py --simulation=charged
 ```
 python3 -u generate_dataset.py --simulation=gravity --n-balls=100
 ```
-
 ## Validation
 <table>
   <tr>
     <td></td>
-    <td colspan="2"><b>SEGNN (original)</b></td>
-    <td colspan="2"><b>segnn-jax (ours)</b></td>
+    <td colspan="2"><b>torch (original)</b></td>
+    <td colspan="2"><b>jax (ours)</b></td>
   </tr>
   <tr>
     <td></td>
@@ -75,5 +76,11 @@ python3 -u main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidd
 ```
 python3 -u main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
 ```
+
+<!-- #### QM9
+```
+python3 -u main.py --dataset=qm9 --epochs=500 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=30 --lr=2e-4 --weight-decay=1e-8
+``` -->
+
 
 (configurations used in validation)
