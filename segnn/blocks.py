@@ -1,11 +1,21 @@
 import warnings
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 import e3nn_jax as e3nn
+import haiku as hk
 import jax
 import jax.numpy as jnp
 
 from .graph_utils import SteerableGraphsTuple
+
+
+def get_parameter_uniform(name: str, path_shape: Tuple[int, ...], weight_std: float):
+    # initialize all params with uniform (also biases)
+    return hk.get_parameter(
+        name,
+        shape=path_shape,
+        init=hk.initializers.RandomUniform(-weight_std, weight_std),
+    )
 
 
 def O3TensorProduct(
@@ -14,6 +24,7 @@ def O3TensorProduct(
     output_irreps: e3nn.Irreps,
     biases: bool = True,
     name: Optional[str] = None,
+    uniform_initialization: bool = False,
 ) -> e3nn.IrrepsArray:
     """Applies a linear parametrized tensor product layer.
 
@@ -21,8 +32,9 @@ def O3TensorProduct(
         x (IrrepsArray): Left tensor
         y (IrrepsArray): Right tensor. If None it defaults to np.ones.
         output_irreps: Output representation
-        biases: Specifies tu use biases
+        biases: If set ot true will add biases
         name: Name of the linear layer params
+        uniform_initialization: Initialize weights from a uniform distribution
 
     Returns:
         The output to the weighted tensor product (IrrepsArray).
@@ -33,18 +45,21 @@ def O3TensorProduct(
 
     if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
         warnings.warn(
-            f"The specified output irreps ({output_irreps}) are not scalars but "
-            "both operands are. This can have undesired behaviour such as null "
-            "output Try redistributing them into scalars or choosing higher "
-            "order for the operands."
+            f"The specified output irreps ({output_irreps}) are not scalars but both "
+            "operands are. This can have undesired behaviour such as null output Try "
+            "redistributing them into scalars or chose higher orders for the operands."
         )
 
     tp = e3nn.tensor_product(x, y, irrep_normalization="component")
     # NOTE gradient_normalization="element" for 1/sqrt(fanin) initialization
     #  this is the default in torch and is similar to what is used in the
-    #  original code (tp_rescale)
+    #  original code (tp_rescale). On deeper networks could also init with uniform.
     return e3nn.Linear(
-        output_irreps, biases=biases, gradient_normalization="element", name=name
+        output_irreps,
+        biases=biases,
+        gradient_normalization="element",
+        name=name,
+        get_parameter=(get_parameter_uniform if uniform_initialization else None),
     )(tp)
 
 
@@ -65,7 +80,7 @@ def O3TensorProductGate(
         x (IrrepsArray): Left tensor
         y (IrrepsArray): Right tensor
         output_irreps: Output representation
-        biases: Specifies tu use biases
+        biases: If set ot true will add biases
         scalar_activation: Activation function for scalars
         gate_activation: Activation function for higher order
         name: Name of the linear layer params

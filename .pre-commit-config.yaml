@@ -2,9 +2,8 @@ default_language_version:
   python: python3
 exclude: |
   (?x)^(
-      d3rlpy_data/|
-      d3rlpy_logs/|
-      docs/|
+      datasets/|
+      data/|
   )$
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -29,10 +28,6 @@ repos:
     rev: 22.3.0
     hooks:
       - id: black
-  - repo: https://github.com/pycqa/flake8
-    rev: 3.9.2
-    hooks:
-      - id: flake8
   - repo: https://github.com/pycqa/pylint
     rev: v2.9.6
     hooks:
