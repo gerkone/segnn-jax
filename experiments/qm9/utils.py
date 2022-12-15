@@ -1,19 +1,14 @@
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, Tuple
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
 import jraph
-from torch.utils.data._utils import pin_memory
-from torch.utils.data.dataloader import (
-    _BaseDataLoaderIter,
-    _SingleProcessDataLoaderIter,
-)
-from torch_geometric.data import Data, Dataset
-from torch_geometric.data.data import BaseData
+from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from experiments.qm9.dataset import QM9
-from segnn import SteerableGraphsTuple
+from segnn_jax import SteerableGraphsTuple
+
+from .dataset import QM9
 
 
 def QM9GraphTransform(
@@ -70,62 +65,6 @@ def QM9GraphTransform(
     return _to_steerable_graph
 
 
-class TakeUntilIterator(_SingleProcessDataLoaderIter):
-    def __init__(self, loader):
-        super().__init__(loader)
-        self._max_nodes = loader.max_batch_nodes
-        self._max_edges = loader.max_batch_edges
-
-    def _next_data(self):
-        index = self._next_index()  # may raise StopIteration
-        while True:
-            data_ = self._dataset_fetcher.fetch(index)  # may raise StopIteration
-            if (
-                data_.x.shape[0] > self._max_nodes
-                or data_.edge_index.shape[1] > self._max_edges
-            ):
-                break
-            data = data_
-            # TODO better condition and index steps
-            index.extend(self._next_index())
-        if self._pin_memory:
-            data = pin_memory.pin_memory(data, self._pin_memory_device)
-        return data
-
-
-class TakeUntilDataLoader(DataLoader):
-    """
-    Bad implementation of a dataloader that takes until a certain size.
-
-    Mostly here reduce the amount of padding a bit. Note that this can introduce a bias
-    towards larger molecules (as they fill the batches faster and count more towards
-    the loss), but speeds up the training so it's the default.
-    """
-
-    def __init__(
-        self,
-        max_batch_nodes: int,
-        max_batch_edges: int,
-        dataset: Union[Dataset, List[BaseData]],
-        batch_size: int = 1,
-        shuffle: bool = False,
-        follow_batch: Optional[List[str]] = None,
-        exclude_keys: Optional[List[str]] = None,
-        **kwargs,
-    ):
-        super().__init__(
-            dataset, batch_size, shuffle, follow_batch, exclude_keys, **kwargs
-        )
-        self.max_batch_nodes = max_batch_nodes
-        self.max_batch_edges = max_batch_edges
-
-    def _get_iterator(self) -> "_BaseDataLoaderIter":
-        if self.num_workers == 0:
-            return TakeUntilIterator(self)
-        else:
-            raise NotImplementedError
-
-
 def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
     dataset_train = QM9(
         "datasets",
@@ -166,27 +105,20 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
         )
     )
 
-    # load data
-    # NOTE replace with normal DataLoader if slower training is ok
-    loader_train = TakeUntilDataLoader(
-        max_batch_nodes,
-        max_batch_edges,
+    # not great and very slow due to huge padding
+    loader_train = DataLoader(
         dataset_train,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         drop_last=True,
     )
-    loader_val = TakeUntilDataLoader(
-        max_batch_nodes,
-        max_batch_edges,
+    loader_val = DataLoader(
         dataset_val,
         batch_size=args.batch_size,
         shuffle=False,
         drop_last=True,
     )
-    loader_test = TakeUntilDataLoader(
-        max_batch_nodes,
-        max_batch_edges,
+    loader_test = DataLoader(
         dataset_test,
         batch_size=args.batch_size,
         shuffle=False,

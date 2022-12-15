@@ -1,6 +1,6 @@
 import os.path as osp
 import pathlib
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Sequence, Tuple, Union
 
 import numpy as np
@@ -28,6 +28,8 @@ class BaseDataset(ABC):
         self.data_type = data_type
         self.max_samples = int(max_samples)
         self.normalize = normalize
+
+        self.data = None
 
     def get_n_nodes(self):
         return self.data[0].shape[2]
@@ -62,10 +64,12 @@ class BaseDataset(ABC):
         x = x - x.mean(axis=0)
         return np.divide(x, std, out=x, where=std != 0)
 
+    @abstractmethod
     def load(self):
         raise NotImplementedError
 
-    def preprocess(self) -> Tuple[np.ndarray, ...]:
+    @abstractmethod
+    def preprocess(self, *args) -> Tuple[np.ndarray, ...]:
         raise NotImplementedError
 
 
@@ -83,8 +87,9 @@ class ChargedDataset(BaseDataset):
         )
         self.data, self.edges = self.load()
 
-    def preprocess(self, loc, vel, edges, charges) -> Tuple[np.ndarray, ...]:
+    def preprocess(self, *args) -> Tuple[np.ndarray, ...]:
         # swap n_nodes - n_features dimensions
+        loc, vel, edges, charges = args
         loc, vel = np.transpose(loc, (0, 1, 3, 2)), np.transpose(vel, (0, 1, 3, 2))
         n_nodes = loc.shape[2]
         loc = loc[0 : self.max_samples, :, :, :]  # limit number of samples
@@ -173,8 +178,8 @@ class GravityDataset(BaseDataset):
         self.target = target
         self.data = self.load()
 
-    def preprocess(self, loc, vel, force, mass):
-        # cast to torch and swap n_nodes <--> n_features dimensions
+    def preprocess(self, *args) -> Tuple[np.ndarray, ...]:
+        loc, vel, force, mass = args
         # NOTE this was in the original paper but does not look right
         # loc = np.transpose(loc, (0, 1, 3, 2))
         # vel = np.transpose(vel, (0, 1, 3, 2))

@@ -10,8 +10,9 @@ from jraph import GraphsTuple, segment_mean
 from torch.utils.data import DataLoader
 from torch_geometric.nn import knn_graph
 
-from experiments.nbody.datasets import ChargedDataset, GravityDataset
-from segnn import SteerableGraphsTuple
+from segnn_jax import SteerableGraphsTuple
+
+from .datasets import ChargedDataset, GravityDataset
 
 key = random.PRNGKey(0)
 
@@ -100,14 +101,15 @@ def NbodyGraphTransform(
 
     if data_type == "charged":
         # charged system is a connected graph
-        full_edge_indices = [
-            (i + n_nodes * b, j + n_nodes * b)
-            for b in range(batch_size)
-            for i in range(n_nodes)
-            for j in range(n_nodes)
-            if i != j
-        ]
-        full_edge_indices = np.array(full_edge_indices).T
+        full_edge_indices = np.array(
+            [
+                (i + n_nodes * b, j + n_nodes * b)
+                for b in range(batch_size)
+                for i in range(n_nodes)
+                for j in range(n_nodes)
+                if i != j
+            ]
+        ).T
 
     def _to_steerable_graph(data: List) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
 
