@@ -2,9 +2,8 @@
 Reimplementation of [SEGNN](https://arxiv.org/abs/2110.02905) in jax. Original work by Johannes Brandstetter, Rob Hesselink, Elise van der Pol, Erik Bekkers and Max Welling.
 
 ## Installation
-To install only the model requirements run
 ```
-python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 The validation experiments are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed.
@@ -66,7 +65,7 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
 
 ** with padding
 
-## Usage
+## Usage for validation
 ### Nbody
 #### Charged experiment
 ```
