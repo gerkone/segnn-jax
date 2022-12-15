@@ -3,6 +3,11 @@ Reimplementation of [SEGNN](https://arxiv.org/abs/2110.02905) in jax. Original w
 
 ## Installation
 ```
+python -m pip install segnn-jax
+```
+
+Or build locally
+```
 python -m pip install -e .
 ```
 

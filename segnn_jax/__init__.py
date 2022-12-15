@@ -12,3 +12,5 @@ __all__ = [
     "balanced_irreps",
     "SteerableGraphsTuple",
 ]
+
+__version__ = "0.2"
