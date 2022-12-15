@@ -1,8 +1,17 @@
-.vscode
-__pycache__
+# experiments
 *.npy
+wandb/
+nohup.out
+datasets/
+
+# dev
+.vscode
+__pycache__/
 *.pyc
 venv
-wandb
-nohup.out
-datasets
+
+# build
+*.whl
+build/
+dist/
+*.egg-info/

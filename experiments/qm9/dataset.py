@@ -139,17 +139,19 @@ class QM9(InMemoryDataset):
         return None
 
     @property
-    def raw_file_names(self) -> List[str]:
+    def raw_file_names(self) -> Optional[List[str]]:
         try:
             import rdkit  # noqa
 
             return ["gdb9.sdf", "gdb9.sdf.csv", "uncharacterized.txt"]
         except ImportError:
+            import sys
+
             print("Please install rdkit")
-            return
+            sys.exit(1)
 
     @property
-    def processed_file_names(self) -> str:
+    def processed_file_names(self) -> List[str]:
         return [
             "_".join(
                 [

@@ -11,7 +11,7 @@ import optax
 
 import wandb
 from experiments import setup_datasets
-from segnn import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
+from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
 key = jax.random.PRNGKey(0)
 
@@ -117,7 +117,7 @@ def train(
     avg_time = []
 
     for e in range(args.epochs):
-        train_loss = 0
+        train_loss = 0.0
         train_start = time.perf_counter_ns()
         for data in loader_train:
             graph, target = graph_transform(data)
@@ -186,7 +186,7 @@ if __name__ == "__main__":
         "--batch-size",
         type=int,
         default=128,
-        help="Batch size.",
+        help="Batch size (number of graphs).",
     )
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
     parser.add_argument(
