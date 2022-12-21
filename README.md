@@ -11,8 +11,17 @@ Or build locally
 python -m pip install -e .
 ```
 
+### GPU support
+Upgrade `jax` to the gpu version
+```
+pip install --upgrade "jax[cuda]==0.4.1" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+
+### Experiments
+
 The validation experiments are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed.
 ```
+pip3 install torch==1.12.1  --extra-index-url https://download.pytorch.org/whl/cu116
 python -m pip install -r experiments/requirements.txt
 ```
 
@@ -61,29 +70,29 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
   <tr>
     <td> <code>QM9 (alpha)</code> </td>
     <td>.06</td>
-    <td></td>
-    <td></td>
+    <td>159.17</td>
+    <td>.095</td>
     <td>109.58**</td>
   </tr>
 </table>
 *remeasured (Quadro RTX 4000), batch of 100 graphs, single precision
 
-** with padding
+** padded
 
 ## Usage for validation
 ### Nbody
 #### Charged experiment
 ```
-python3 -u main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
+python main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
 ```
 #### Gravity experiment
 ```
-python3 -u main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
+python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
 ```
 
 #### QM9
 ```
-python3 -u main.py --dataset=qm9 --epochs=400 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8
+python main.py --dataset=qm9 --epochs=400 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8
 ```
 
 
