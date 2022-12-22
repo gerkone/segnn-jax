@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from .graph_utils import SteerableGraphsTuple
 
 
-def get_parameter_uniform(name: str, path_shape: Tuple[int, ...], weight_std: float):
+def _uniform_initialization(name: str, path_shape: Tuple[int, ...], weight_std: float):
     # initialize all params with uniform (also biases)
     return hk.get_parameter(
         name,
@@ -59,7 +59,7 @@ def O3TensorProduct(
         biases=biases,
         gradient_normalization="element",
         name=name,
-        get_parameter=(get_parameter_uniform if uniform_initialization else None),
+        get_parameter=(_uniform_initialization if uniform_initialization else None),
     )(tp)
 
 
@@ -124,7 +124,7 @@ def O3Embedding(
     """
     graph = st_graph.graph
     nodes = O3TensorProduct(
-        graph.nodes, st_graph.node_attributes, embed_irreps, name="o3_mbedding_nodes"
+        graph.nodes, st_graph.node_attributes, embed_irreps, name="o3_embedding_nodes"
     )
     st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
 
@@ -133,7 +133,7 @@ def O3Embedding(
             st_graph.additional_message_features,
             st_graph.edge_attributes,
             embed_irreps,
-            name="o3_mbedding_msg_features",
+            name="o3_embedding_msg_features",
         )
         st_graph = st_graph._replace(
             additional_message_features=additional_message_features

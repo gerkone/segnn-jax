@@ -1,6 +1,7 @@
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
+import haiku as hk
 import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
@@ -144,21 +145,12 @@ def SEGNNLayer(
     return _message, _update
 
 
-def SEGNN(
-    hidden_irreps: Union[List[e3nn.Irreps], e3nn.Irreps],
-    output_irreps: e3nn.Irreps,
-    num_layers: int,
-    norm: Optional[str] = None,
-    pool: Optional[str] = "avg",
-    task: Optional[str] = "graph",
-    blocks_per_layer: int = 2,
-    embed_msg_features: bool = True,
-):
+class SEGNN(hk.Module):
     """Steerable E(3) equivariant network.
 
     Original paper https://arxiv.org/abs/2110.02905.
 
-    Args:
+    Attributes:
         hidden_irreps: Feature representation in the hidden layers
         output_irreps: Output representation.
         num_layers: Number of message passing layers
@@ -167,50 +159,84 @@ def SEGNN(
         task: Specifies where the output is located. Either 'graph' or 'node'
         blocks_per_layer: Number of tensor product blocks in each message passing
         embed_msg_features: Set to true to also embed edges/message passing features
-
-    Returns:
-        The configured SEGNN model.
     """
 
-    if isinstance(hidden_irreps, e3nn.Irreps):
-        hidden_irreps_units = num_layers * [hidden_irreps]
-    else:
-        hidden_irreps_units = hidden_irreps
+    def __init__(
+        self,
+        hidden_irreps: Union[List[e3nn.Irreps], e3nn.Irreps],
+        output_irreps: e3nn.Irreps,
+        num_layers: int,
+        norm: Optional[str] = None,
+        pool: Optional[str] = "avg",
+        task: Optional[str] = "graph",
+        blocks_per_layer: int = 2,
+        embed_msg_features: bool = False,
+    ):
+        super(SEGNN).__init__()
 
-    def _ApplySEGNN(st_graph: SteerableGraphsTuple) -> jnp.array:
-        # embedding
-        # NOTE edge embedding is not in the original paper but can get good results
-        st_graph = O3Embedding(
-            st_graph, hidden_irreps_units[0], embed_msg_features=embed_msg_features
-        )
+        if isinstance(hidden_irreps, e3nn.Irreps):
+            self._hidden_irreps_units = num_layers * [hidden_irreps]
+        else:
+            self._hidden_irreps_units = hidden_irreps
 
-        # message passing layers
-        for n, hrp in enumerate(hidden_irreps_units):
-            message_fn, update_fn = SEGNNLayer(
-                output_irreps=hrp, layer_num=n, blocks=blocks_per_layer, norm=norm
-            )
-            # NOTE node_attributes, edge_attributes and additional_message_features
-            #  are never updated within the message passing layers
-            st_graph = st_graph._replace(
-                graph=jraph.GraphNetwork(
-                    update_node_fn=Partial(update_fn, st_graph.node_attributes),
-                    update_edge_fn=Partial(
-                        message_fn,
-                        st_graph.edge_attributes,
-                        st_graph.additional_message_features,
-                    ),
-                    aggregate_edges_for_nodes_fn=jraph.segment_sum,
-                )(st_graph.graph)
-            )
+        self._embed_msg_features = embed_msg_features
+        self._norm = norm
+        self._blocks_per_layer = blocks_per_layer
 
-        # decoder
-        nodes = SEDecoder(
-            latent_irreps=hidden_irreps_units[-1],
+        self._decoder = SEDecoder(
+            latent_irreps=self._hidden_irreps_units[-1],
             output_irreps=output_irreps,
             task=task,
             pool=pool,
-        )(st_graph)
+        )
+
+    def _propagate(
+        self, st_graph: SteerableGraphsTuple, irreps: e3nn.Irreps, layer_num: int
+    ) -> SteerableGraphsTuple:
+        """Perform a message passing step.
+
+        Args:
+            st_graph: Input graph
+            irreps: Irreps in the hidden layer
+            layer_num: Numbering of the layer
+
+        Returns:
+            The updated graph
+        """
+        message_fn, update_fn = SEGNNLayer(
+            output_irreps=irreps,
+            layer_num=layer_num,
+            blocks=self._blocks_per_layer,
+            norm=self._norm,
+        )
+        # NOTE node_attributes, edge_attributes and additional_message_features
+        #  are never updated within the message passing layers
+        return st_graph._replace(
+            graph=jraph.GraphNetwork(
+                update_node_fn=Partial(update_fn, st_graph.node_attributes),
+                update_edge_fn=Partial(
+                    message_fn,
+                    st_graph.edge_attributes,
+                    st_graph.additional_message_features,
+                ),
+                aggregate_edges_for_nodes_fn=jraph.segment_sum,
+            )(st_graph.graph)
+        )
+
+    def __call__(self, st_graph: SteerableGraphsTuple) -> jnp.array:
+        # embedding
+        # NOTE edge embedding is not in the original paper but can get good results
+        st_graph = O3Embedding(
+            st_graph,
+            self._hidden_irreps_units[0],
+            embed_msg_features=self._embed_msg_features,
+        )
+
+        # message passing layers
+        for n, hrp in enumerate(self._hidden_irreps_units):
+            st_graph = self._propagate(st_graph, irreps=hrp, layer_num=n)
+
+        # decoder
+        nodes = self._decoder(st_graph)
 
         return jnp.squeeze(nodes.array)
-
-    return _ApplySEGNN

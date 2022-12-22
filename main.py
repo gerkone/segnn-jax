@@ -74,7 +74,9 @@ def train(
     init_graph, _ = graph_transform(next(iter(loader_train)))
     params, segnn_state = segnn.init(key, init_graph)
 
-    total_steps = args.epochs * int(len(loader_train) / args.batch_size)
+    total_steps = args.epochs * len(loader_train)
+
+    # set up learning rate and optimizer
     if args.lr_scheduling:
         learning_rate = optax.piecewise_constant_schedule(
             args.lr,
@@ -85,6 +87,7 @@ def train(
         )
     else:
         learning_rate = args.lr
+
     opt_init, opt_update = optax.adamw(
         learning_rate=learning_rate, weight_decay=args.weight_decay
     )
@@ -92,7 +95,7 @@ def train(
     if args.dataset == "qm9":
         # for target normalization
         target_mean, target_mad = loader_train.dataset.calc_stats()
-        # ignore padding target
+        # ignore padded target
         loss_fn = partial(mae, mask_last=True)
     else:
         # no normalization for nbody
@@ -128,7 +131,7 @@ def train(
             train_loss += loss
         train_time = (time.perf_counter_ns() - train_start) / 1e6 / len(loader_train)
         train_loss /= len(loader_train)
-        wandb_logs = {"train_loss": train_loss, "update_time": train_time}
+        wandb_logs = {"train_loss": float(train_loss), "update_time": float(train_time)}
         print(
             "[Epoch {:>4}] training loss {:.6f}{}, update time {:.3f}ms".format(
                 e + 1,
@@ -150,7 +153,9 @@ def train(
             eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / len(loader_val)
             avg_time.append(eval_time)
             val_loss /= len(loader_val)
-            wandb_logs.update({"val_loss": val_loss, "eval_time": eval_time})
+            wandb_logs.update(
+                {"val_loss": float(val_loss), "eval_time": float(eval_time)}
+            )
             print(
                 " - validation loss {:.6f}, eval time {:.3f}ms".format(
                     val_loss, eval_time
@@ -171,7 +176,7 @@ def train(
     test_loss /= len(loader_test)
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
-        wandb.log({"test_loss": test_loss, "avg_eval_time": avg_time})
+        wandb.log({"test_loss": float(test_loss), "avg_eval_time": float(avg_time)})
     print(
         "Training done. Test loss {:.6f} - "
         "average eval time {:.3f}ms".format(test_loss, avg_time)
@@ -361,7 +366,7 @@ if __name__ == "__main__":
     )
 
     # build model
-    segnn = SEGNN(
+    segnn = lambda x: SEGNN(
         hidden_irreps=hidden_irreps,
         output_irreps=args.output_irreps,
         num_layers=args.layers,
@@ -369,8 +374,7 @@ if __name__ == "__main__":
         pool="avg",
         blocks_per_layer=args.blocks,
         norm=args.norm,
-        embed_msg_features=False,
-    )
+    )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
     dataset_train, dataset_val, dataset_test, graph_transform = setup_datasets(args)
