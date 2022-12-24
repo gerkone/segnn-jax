@@ -172,7 +172,7 @@ class SEGNN(hk.Module):
         blocks_per_layer: int = 2,
         embed_msg_features: bool = False,
     ):
-        super(SEGNN, self).__init__()
+        super(SEGNN, self).__init__() # noqa
 
         if isinstance(hidden_irreps, e3nn.Irreps):
             self._hidden_irreps_units = num_layers * [hidden_irreps]

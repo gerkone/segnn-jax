@@ -6,7 +6,7 @@ Reimplementation of [SEGNN](https://arxiv.org/abs/2110.02905) in jax. Original w
 python -m pip install segnn-jax
 ```
 
-Or build locally
+Or clone this repository and build locally
 ```
 python -m pip install -e .
 ```
@@ -18,10 +18,9 @@ pip install --upgrade "jax[cuda]==0.4.1" -f https://storage.googleapis.com/jax-r
 ```
 
 ### Experiments
-
-The validation experiments are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed.
+The validation experiments are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed (cpu versions are enough).
 ```
-pip3 install torch==1.12.1  --extra-index-url https://download.pytorch.org/whl/cu116
+pip3 install torch==1.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r experiments/requirements.txt
 ```
 
@@ -71,20 +70,26 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
     <td> <code>QM9 (alpha)</code> </td>
     <td>.06</td>
     <td>159.17</td>
-    <td>.095</td>
+    <td></td>
     <td>109.58**</td>
   </tr>
 </table>
-*remeasured (Quadro RTX 4000), batch of 100 graphs, single precision
+* remeasured (Quadro RTX 4000), batch of 100 graphs, single precision
 
 ** padded
 
 ## Usage for validation
+Validation experiments are only included in the github repo, so it needs to be cloned first.
+```
+git clone https://github.com/gerkone/segnn-jax
+```
+
 ### Nbody
 #### Charged experiment
 ```
 python main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
 ```
+
 #### Gravity experiment
 ```
 python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
@@ -92,12 +97,12 @@ python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 -
 
 #### QM9
 ```
-python main.py --dataset=qm9 --epochs=400 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8
+python main.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8 --lr-scheduling
 ```
-
 
 (configurations used in validation)
 
 ## Acknowledgments
 - [e3nn_jax](https://github.com/e3nn/e3nn-jax) made this reimplementation possible.
 - [Artur Toshev](https://github.com/arturtoshev) and [Johannes Brandsetter](https://github.com/brandstetter-johannes), for the developement support.
+ 
