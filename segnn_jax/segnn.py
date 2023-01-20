@@ -111,6 +111,7 @@ def SEGNNLayer(
             msg = O3TensorProductGate(
                 msg, edge_attribute, output_irreps, name=f"message_{i}_{layer_num}"
             )
+        # NOTE: original implementation only applied batch norm to messages
         if norm == "batch":
             msg = e3nn.BatchNorm(irreps=output_irreps)(msg)
         return msg
@@ -136,6 +137,7 @@ def SEGNNLayer(
         )
         # residual connection
         nodes += update
+        # message norm
         if norm in ["batch", "instance"]:
             nodes = e3nn.BatchNorm(irreps=output_irreps, instance=(norm == "instance"))(
                 nodes
@@ -172,7 +174,7 @@ class SEGNN(hk.Module):
         blocks_per_layer: int = 2,
         embed_msg_features: bool = False,
     ):
-        super(SEGNN, self).__init__() # noqa
+        super(SEGNN, self).__init__()  # noqa # pylint: disable=R1725
 
         if isinstance(hidden_irreps, e3nn.Irreps):
             self._hidden_irreps_units = num_layers * [hidden_irreps]

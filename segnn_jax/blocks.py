@@ -80,7 +80,7 @@ def O3TensorProductGate(
         x (IrrepsArray): Left tensor
         y (IrrepsArray): Right tensor
         output_irreps: Output representation
-        biases: If set ot true will add biases
+        biases: Add biases
         scalar_activation: Activation function for scalars
         gate_activation: Activation function for higher order
         name: Name of the linear layer params

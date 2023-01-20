@@ -2,6 +2,7 @@ import argparse
 import time
 from functools import partial
 from typing import Tuple, Union
+
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
@@ -20,7 +21,7 @@ def predict(
     state: hk.State,
     graph: SteerableGraphsTuple,
     mean_shift: Union[jnp.array, float] = 0,
-    mad_shift: Union[jnp.array, float] = 1
+    mad_shift: Union[jnp.array, float] = 1,
 ) -> Tuple[jnp.ndarray, hk.State]:
     pred, state = segnn.apply(params, state, graph)
     return (jnp.multiply(pred, mad_shift) + mean_shift), state
@@ -34,7 +35,7 @@ def mae(
     target: jnp.ndarray,
     mean_shift: Union[jnp.array, float] = 0,
     mad_shift: Union[jnp.array, float] = 1,
-    mask_last: bool = False
+    mask_last: bool = False,
 ) -> Tuple[float, hk.State]:
     pred, state = predict(params, state, graph, mean_shift, mad_shift)
     assert target.shape == pred.shape
@@ -53,7 +54,7 @@ def mse(
     target: jnp.ndarray,
     mean_shift: Union[jnp.array, float] = 0,
     mad_shift: Union[jnp.array, float] = 1,
-    mask_last: bool = False
+    mask_last: bool = False,
 ) -> Tuple[float, hk.State]:
     pred, state = predict(params, state, graph, mean_shift, mad_shift)
     assert target.shape == pred.shape

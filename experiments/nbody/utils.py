@@ -1,20 +1,23 @@
 from typing import Callable, List, Optional, Tuple
 
+import e3nn_jax as e3nn
 import jax.numpy as jnp
 import jax.tree_util as tree
 import numpy as np
 import torch
-import e3nn_jax as e3nn
 from jraph import GraphsTuple, segment_mean
 from torch.utils.data import DataLoader
 from torch_geometric.nn import knn_graph
 
 from segnn_jax import SteerableGraphsTuple
+
 from .datasets import ChargedDataset, GravityDataset
 
 
 def O3Transform(
-    node_features_irreps: e3nn.Irreps, edge_features_irreps: e3nn.Irreps, lmax_attributes: int
+    node_features_irreps: e3nn.Irreps,
+    edge_features_irreps: e3nn.Irreps,
+    lmax_attributes: int,
 ) -> Callable:
     """
     Build a transformation function that includes (nbody) O3 attributes to a graph.
@@ -25,7 +28,7 @@ def O3Transform(
         st_graph: SteerableGraphsTuple,
         loc: jnp.ndarray,
         vel: jnp.ndarray,
-        charges: jnp.ndarray
+        charges: jnp.ndarray,
     ) -> SteerableGraphsTuple:
 
         graph = st_graph.graph
@@ -40,7 +43,7 @@ def O3Transform(
 
         vel_abs = jnp.sqrt(jnp.power(vel, 2).sum(1, keepdims=True))
         mean_loc = loc.mean(1, keepdims=True)
-        
+
         nodes = e3nn.IrrepsArray(
             node_features_irreps,
             jnp.concatenate((loc - mean_loc, vel, vel_abs), axis=-1),
