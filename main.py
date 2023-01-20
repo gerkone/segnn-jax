@@ -2,27 +2,25 @@ import argparse
 import time
 from functools import partial
 from typing import Tuple, Union
-
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
-
 import wandb
+
 from experiments import setup_datasets
 from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
 key = jax.random.PRNGKey(0)
 
 
-@jax.jit
 def predict(
     params: hk.Params,
     state: hk.State,
     graph: SteerableGraphsTuple,
     mean_shift: Union[jnp.array, float] = 0,
-    mad_shift: Union[jnp.array, float] = 1,
+    mad_shift: Union[jnp.array, float] = 1
 ) -> Tuple[jnp.ndarray, hk.State]:
     pred, state = segnn.apply(params, state, graph)
     return (jnp.multiply(pred, mad_shift) + mean_shift), state
@@ -36,7 +34,7 @@ def mae(
     target: jnp.ndarray,
     mean_shift: Union[jnp.array, float] = 0,
     mad_shift: Union[jnp.array, float] = 1,
-    mask_last: bool = False,
+    mask_last: bool = False
 ) -> Tuple[float, hk.State]:
     pred, state = predict(params, state, graph, mean_shift, mad_shift)
     assert target.shape == pred.shape
@@ -55,7 +53,7 @@ def mse(
     target: jnp.ndarray,
     mean_shift: Union[jnp.array, float] = 0,
     mad_shift: Union[jnp.array, float] = 1,
-    mask_last: bool = False,
+    mask_last: bool = False
 ) -> Tuple[float, hk.State]:
     pred, state = predict(params, state, graph, mean_shift, mad_shift)
     assert target.shape == pred.shape
@@ -93,12 +91,12 @@ def train(
     )
 
     if args.dataset == "qm9":
-        # for target normalization
+        # qm9
         target_mean, target_mad = loader_train.dataset.calc_stats()
         # ignore padded target
         loss_fn = partial(mae, mask_last=True)
     else:
-        # no normalization for nbody
+        # nbody
         target_mean, target_mad = 0, 1
         loss_fn = mse
 
@@ -124,7 +122,8 @@ def train(
         train_start = time.perf_counter_ns()
         for data in loader_train:
             graph, target = graph_transform(data)
-            target = jnp.divide(target - target_mean, target_mad).at[-1].set(0)
+            # normalize targets
+            target = jnp.divide(target - target_mean, target_mad)
             loss, params, segnn_state, opt_state = update(
                 params, segnn_state, graph, target, opt_state
             )
@@ -146,7 +145,7 @@ def train(
             eval_start = time.perf_counter_ns()
             for data in loader_val:
                 graph, target = graph_transform(data)
-                loss, segnn_state = jax.lax.stop_gradient(
+                loss, _ = jax.lax.stop_gradient(
                     loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
                 )
                 val_loss += loss
@@ -169,7 +168,7 @@ def train(
     test_loss = 0
     for data in loader_test:
         graph, target = graph_transform(data)
-        loss, segnn_state = jax.lax.stop_gradient(
+        loss, _ = jax.lax.stop_gradient(
             loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
         )
         test_loss += loss
@@ -265,18 +264,18 @@ if __name__ == "__main__":
 
     # Model parameters
     parser.add_argument(
-        "--units", type=int, default=128, help="Number of values in the hidden layers"
+        "--units", type=int, default=64, help="Number of values in the hidden layers"
     )
     parser.add_argument(
         "--lmax-hidden",
         type=int,
-        default=2,
+        default=1,
         help="Max degree of hidden representations.",
     )
     parser.add_argument(
         "--lmax-attributes",
         type=int,
-        default=3,
+        default=1,
         help="Max degree of geometric attribute embedding",
     )
     parser.add_argument(
@@ -288,7 +287,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--norm",
         type=str,
-        default="batch",
+        default="none",
         choices=["instance", "batch", "none"],
         help="Normalisation type",
     )

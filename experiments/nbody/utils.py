@@ -4,32 +4,28 @@ import jax.numpy as jnp
 import jax.tree_util as tree
 import numpy as np
 import torch
-from e3nn_jax import Irreps, IrrepsArray, spherical_harmonics
-from jax import random
+import e3nn_jax as e3nn
 from jraph import GraphsTuple, segment_mean
 from torch.utils.data import DataLoader
 from torch_geometric.nn import knn_graph
 
 from segnn_jax import SteerableGraphsTuple
-
 from .datasets import ChargedDataset, GravityDataset
-
-key = random.PRNGKey(0)
 
 
 def O3Transform(
-    node_features_irreps: Irreps, edge_features_irreps: Irreps, lmax_attributes: int
+    node_features_irreps: e3nn.Irreps, edge_features_irreps: e3nn.Irreps, lmax_attributes: int
 ) -> Callable:
     """
     Build a transformation function that includes (nbody) O3 attributes to a graph.
     """
-    attribute_irreps = Irreps.spherical_harmonics(lmax_attributes)
+    attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
 
     def _o3_transform(
         st_graph: SteerableGraphsTuple,
         loc: jnp.ndarray,
         vel: jnp.ndarray,
-        charges: jnp.ndarray,
+        charges: jnp.ndarray
     ) -> SteerableGraphsTuple:
 
         graph = st_graph.graph
@@ -37,23 +33,23 @@ def O3Transform(
         rel_pos = loc[graph.senders] - loc[graph.receivers]
         edge_dist = jnp.sqrt(jnp.power(rel_pos, 2).sum(1, keepdims=True))
 
-        msg_features = IrrepsArray(
+        msg_features = e3nn.IrrepsArray(
             edge_features_irreps,
             jnp.concatenate((edge_dist, prod_charges), axis=-1),
         )
 
         vel_abs = jnp.sqrt(jnp.power(vel, 2).sum(1, keepdims=True))
         mean_loc = loc.mean(1, keepdims=True)
-
-        nodes = IrrepsArray(
+        
+        nodes = e3nn.IrrepsArray(
             node_features_irreps,
-            jnp.concatenate((loc - mean_loc, vel, vel_abs), axis=1),
+            jnp.concatenate((loc - mean_loc, vel, vel_abs), axis=-1),
         )
 
-        edge_attributes = spherical_harmonics(
+        edge_attributes = e3nn.spherical_harmonics(
             attribute_irreps, rel_pos, normalize=True, normalization="integral"
         )
-        vel_embedding = spherical_harmonics(
+        vel_embedding = e3nn.spherical_harmonics(
             attribute_irreps, vel, normalize=True, normalization="integral"
         )
         # scatter edge attributes
@@ -89,7 +85,7 @@ def O3Transform(
 
 def NbodyGraphTransform(
     transform: Callable,
-    data_type: str,
+    dataset_name: str,
     n_nodes: int,
     batch_size: int,
     neighbours: Optional[int] = 0,
@@ -99,7 +95,7 @@ def NbodyGraphTransform(
     Build a function that converts torch DataBatch into SteerableGraphsTuple.
     """
 
-    if data_type == "charged":
+    if dataset_name == "charged":
         # charged system is a connected graph
         full_edge_indices = np.array(
             [
@@ -117,15 +113,15 @@ def NbodyGraphTransform(
 
         cur_batch = int(loc.shape[0] / n_nodes)
 
-        if data_type == "charged":
+        if dataset_name == "charged":
             edge_indices = full_edge_indices[:, : n_nodes * (n_nodes - 1) * cur_batch]
             senders, receivers = edge_indices[0], edge_indices[1]
-        if data_type == "gravity":
+        if dataset_name == "gravity":
             batch = torch.arange(0, cur_batch)
             batch = batch.repeat_interleave(n_nodes).long()
             edge_indices = knn_graph(torch.from_numpy(np.array(loc)), neighbours, batch)
-            senders = jnp.array(edge_indices[0])
-            receivers = jnp.array(edge_indices[1])
+            # switched by default
+            senders, receivers = jnp.array(edge_indices[1]), jnp.array(edge_indices[0])
 
         st_graph = SteerableGraphsTuple(
             graph=GraphsTuple(
@@ -210,28 +206,28 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
         batch_size=args.batch_size,
         neighbours=args.neighbours,
         relative_target=(args.target == "pos"),
-        data_type=args.dataset,
+        dataset_name=args.dataset,
     )
 
     loader_train = DataLoader(
         dataset_train,
         batch_size=args.batch_size,
-        shuffle=True,
-        drop_last=True,
+        shuffle=False,
+        drop_last=False,
         collate_fn=numpy_collate,
     )
     loader_val = DataLoader(
         dataset_val,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=numpy_collate,
     )
     loader_test = DataLoader(
         dataset_test,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=numpy_collate,
     )
 

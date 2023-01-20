@@ -9,6 +9,8 @@ DATA_DIR = "data"
 
 
 class BaseDataset(ABC):
+    """Abstract n-body dataset class."""
+
     def __init__(
         self,
         data_type,
@@ -74,6 +76,8 @@ class BaseDataset(ABC):
 
 
 class ChargedDataset(BaseDataset):
+    """N-body charged dataset class."""
+
     def __init__(
         self,
         partition="train",
@@ -146,20 +150,10 @@ class ChargedDataset(BaseDataset):
 
         return loc, vel, edge_attr, charges, target_loc
 
-    def get_edges(self, batch_size, n_nodes):
-        edges = [np.array(self.edges[0]), np.array(self.edges[1])]
-        if batch_size == 1:
-            return edges
-        elif batch_size > 1:
-            rows, cols = [], []
-            for i in range(batch_size):
-                rows.append(edges[0] + n_nodes * i)
-                cols.append(edges[1] + n_nodes * i)
-            edges = [np.concatenate(rows), np.concatenate(cols)]
-        return edges
-
 
 class GravityDataset(BaseDataset):
+    """N-body gravity dataset class."""
+
     def __init__(
         self,
         partition="train",

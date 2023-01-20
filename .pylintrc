@@ -56,6 +56,7 @@ confidence=
 # no Warning level messages displayed, use"--disable=all --enable=classes
 # --disable=W"
 disable=C0114, # module docstring
+        C0115, # class docstring
         W0108, # unnecessary lambda
         W0621, # redifining from outer scope
         C0103, # bad function names
