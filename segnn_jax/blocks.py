@@ -1,5 +1,5 @@
 import warnings
-from typing import Callable, Optional, Tuple, Union, Any
+from typing import Any, Callable, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from e3nn_jax._src.tensor_products import naive_broadcast_decorator
 
 from .graph_utils import SteerableGraphsTuple
-
 
 InitFn = Callable[[str, Tuple[int, ...], float, Any], jnp.ndarray]
 
@@ -22,7 +21,7 @@ class O3TensorProduct(hk.Module):
         name: Name of the linear layer params
         init_fn: Weight initialization function
         gradient_normalization: Gradient normalization method. Default is "path"
-            NOTE: gradient_normalization="element" for 1/sqrt(fanin) initialization. 
+            NOTE: gradient_normalization="element" for 1/sqrt(fanin) initialization.
             This is the default in torch and is similar to what is used in the original
             code (tp_rescale).
         path_normalization: Path normalization method. Default is "element"
@@ -49,6 +48,7 @@ class O3TensorProduct(hk.Module):
         self._biases = biases
 
         if not init_fn:
+
             def init_fn(
                 name: str,
                 path_shape: Tuple[int, ...],
@@ -138,15 +138,19 @@ class O3TensorProduct(hk.Module):
             b = [
                 self._init_fn(
                     f"b[{i_out}] {tp.irreps_out[i_out]}",
-                    (mul_ir.dim, ),
+                    (mul_ir.dim,),
                     0.0,
                     x.dtype,
                 )
                 for i_out, mul_ir in enumerate(self.output_irreps)
                 if mul_ir.ir.is_scalar()
             ]
-            b = e3nn.IrrepsArray(f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b))    
-            output = e3nn.concatenate([output.filter("0e") + b, output.filter(drop="0e")], axis=1)
+            b = e3nn.IrrepsArray(
+                f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b)
+            )
+            output = e3nn.concatenate(
+                [output.filter("0e") + b, output.filter(drop="0e")], axis=1
+            )
 
         return output
 

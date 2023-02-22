@@ -142,9 +142,12 @@ def SEGNNLayer(
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
         for i in range(blocks - 1):
-            x = O3TensorProductGate(output_irreps, left_irreps=x.irreps, right_irreps=node_attribute.irreps, name=f"update_{i}_{layer_num}")(
-                x, node_attribute
-            )
+            x = O3TensorProductGate(
+                output_irreps,
+                left_irreps=x.irreps,
+                right_irreps=node_attribute.irreps,
+                name=f"update_{i}_{layer_num}",
+            )(x, node_attribute)
         # last update layer without activation
         update = O3TensorProduct(
             output_irreps,

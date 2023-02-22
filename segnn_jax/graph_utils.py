@@ -1,4 +1,4 @@
-from typing import Callable, NamedTuple, Optional, Tuple
+from typing import Callable, NamedTuple, Optional
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp

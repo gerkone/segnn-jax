@@ -60,6 +60,7 @@ disable=C0114, # module docstring
         W0108, # unnecessary lambda
         W0621, # redifining from outer scope
         C0103, # bad function names
+        C0415, # import outside toplevel
         abstract-method,
         apply-builtin,
         arguments-differ,
