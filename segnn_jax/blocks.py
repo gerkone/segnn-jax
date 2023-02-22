@@ -41,9 +41,11 @@ class O3TensorProduct(hk.Module):
     ):
         super().__init__(name)
 
-        self.output_irreps = output_irreps
-        self.right_irreps = right_irreps
-        self.left_irreps = left_irreps
+        self.output_irreps = output_irreps.regroup()
+        if not right_irreps:
+            right_irreps = e3nn.Irreps("1x0e")
+        self.right_irreps = right_irreps.regroup()
+        self.left_irreps = left_irreps.regroup()
 
         self._biases = biases
 
@@ -93,17 +95,19 @@ class O3TensorProduct(hk.Module):
                 "redistributing them into scalars or chose higher orders for the operands."
             )
 
+        x = x.remove_nones().regroup()
+        y = y.remove_nones().regroup()
+
+        assert (
+            x.irreps == self.left_irreps
+        ), f"Left irreps do not match. Got {x.irreps}, expected {self.left_irreps}"
+        assert (
+            y.irreps == self.right_irreps
+        ), f"Right irreps do not match. Got {y.irreps}, expected {self.right_irreps}"
+
         # NOTE FunctionalFullyConnectedTensorProduct appears to be faster than combining
         #  tensor_product+linear: https://github.com/e3nn/e3nn-jax/releases/tag/0.14.0
         #  Implementation adapted from e3nn.haiku.FullyConnectedTensorProduct
-
-        if self.left_irreps is not None:
-            x = x._convert(self.left_irreps)
-        if self.right_irreps is not None:
-            y = y._convert(self.right_irreps)
-
-        x = x.remove_nones().simplify()
-        y = y.remove_nones().simplify()
 
         tp = e3nn.FunctionalFullyConnectedTensorProduct(
             x.irreps,
@@ -119,7 +123,6 @@ class O3TensorProduct(hk.Module):
                 name=(
                     f"w[{ins.i_in1},{ins.i_in2},{ins.i_out}] "
                     f"{tp.irreps_in2[ins.i_in2]},{tp.irreps_out[ins.i_out]}"
-                    # f"{tp.irreps_in1[ins.i_in1]},{tp.irreps_in2[ins.i_in2]},{tp.irreps_out[ins.i_out]}"
                 ),
                 path_shape=ins.path_shape,
                 weight_std=ins.weight_std,
