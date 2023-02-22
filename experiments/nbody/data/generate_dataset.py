@@ -95,7 +95,6 @@ def generate_dataset(num_sims, length, sample_freq):
 
 
 if __name__ == "__main__":
-
     print("Generating {} training simulations".format(args.num_train))
     loc_train, vel_train, edges_train, charges_train = generate_dataset(
         args.num_train, args.length, args.sample_freq

@@ -30,7 +30,6 @@ def O3Transform(
         vel: jnp.ndarray,
         charges: jnp.ndarray,
     ) -> SteerableGraphsTuple:
-
         graph = st_graph.graph
         prod_charges = charges[graph.senders] * charges[graph.receivers]
         rel_pos = loc[graph.senders] - loc[graph.receivers]
@@ -111,7 +110,6 @@ def NbodyGraphTransform(
         ).T
 
     def _to_steerable_graph(data: List) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
-
         loc, vel, _, q, targets = data
 
         cur_batch = int(loc.shape[0] / n_nodes)

@@ -37,19 +37,28 @@ def SEDecoder(
         # pre pool block
         for i in range(blocks):
             nodes = O3TensorProductGate(
-                nodes, st_graph.node_attributes, latent_irreps, name=f"prepool_{i}"
-            )
+                latent_irreps,
+                left_irreps=nodes.irreps,
+                right_irreps=st_graph.node_attributes.irreps,
+                name=f"prepool_{i}",
+            )(nodes, st_graph.node_attributes)
 
         if task == "node":
             nodes = O3TensorProduct(
-                nodes, st_graph.node_attributes, output_irreps, name="output"
-            )
+                output_irreps,
+                left_irreps=nodes.irreps,
+                right_irreps=st_graph.node_attributes.irreps,
+                name="output",
+            )(nodes, st_graph.node_attributes)
 
         if task == "graph":
             # pool over graph
             pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
             nodes = O3TensorProduct(
-                nodes, st_graph.node_attributes, pooled_irreps, name=f"prepool_{blocks}"
+                pooled_irreps,
+                left_irreps=nodes.irreps,
+                right_irreps=st_graph.node_attributes.irreps,
+                name=f"prepool_{blocks}",
             )
 
             # pooling layer
@@ -63,9 +72,11 @@ def SEDecoder(
             # post pool mlp (not steerable)
             for i in range(blocks):
                 nodes = O3TensorProductGate(
-                    nodes, None, pooled_irreps, name=f"postpool_{i}"
-                )
-            nodes = O3TensorProduct(nodes, None, output_irreps, name="output")
+                    pooled_irreps, left_irreps=nodes.irreps, name=f"postpool_{i}"
+                )(nodes, None)
+            nodes = O3TensorProduct(
+                output_irreps, left_irreps=nodes.irreps, name="output"
+            )(nodes, None)
 
         return nodes
 
@@ -109,11 +120,14 @@ def SEGNNLayer(
         # message mlp (phi_m in the paper) steered by edge attributeibutes
         for i in range(blocks):
             msg = O3TensorProductGate(
-                msg, edge_attribute, output_irreps, name=f"message_{i}_{layer_num}"
-            )
+                output_irreps,
+                left_irreps=msg.irreps,
+                right_irreps=edge_attribute.irreps,
+                name=f"message_{i}_{layer_num}",
+            )(msg, edge_attribute)
         # NOTE: original implementation only applied batch norm to messages
         if norm == "batch":
-            msg = e3nn.BatchNorm(irreps=output_irreps)(msg)
+            msg = e3nn.haiku.BatchNorm(irreps=output_irreps)(msg)
         return msg
 
     def _update(
@@ -128,20 +142,26 @@ def SEGNNLayer(
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
         for i in range(blocks - 1):
-            x = O3TensorProductGate(
-                x, node_attribute, output_irreps, name=f"update_{i}_{layer_num}"
+            x = O3TensorProductGate(output_irreps, left_irreps=x.irreps, right_irreps=node_attribute.irreps, name=f"update_{i}_{layer_num}")(
+                x, node_attribute
             )
         # last update layer without activation
         update = O3TensorProduct(
-            x, node_attribute, output_irreps, name=f"update_{blocks}_{layer_num}"
+            output_irreps,
+            left_irreps=x.irreps,
+            right_irreps=node_attribute.irreps,
+            name=f"update_{blocks}_{layer_num}",
+        )(
+            x,
+            node_attribute,
         )
         # residual connection
         nodes += update
         # message norm
         if norm in ["batch", "instance"]:
-            nodes = e3nn.BatchNorm(irreps=output_irreps, instance=(norm == "instance"))(
-                nodes
-            )
+            nodes = e3nn.haiku.BatchNorm(
+                irreps=output_irreps, instance=(norm == "instance")
+            )(nodes)
         return nodes
 
     return _message, _update
@@ -229,9 +249,10 @@ class SEGNN(hk.Module):
         # embedding
         # NOTE edge embedding is not in the original paper but can get good results
         st_graph = O3Embedding(
-            st_graph,
             self._hidden_irreps_units[0],
             embed_msg_features=self._embed_msg_features,
+        )(
+            st_graph,
         )
 
         # message passing layers
