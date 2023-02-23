@@ -74,9 +74,9 @@ def SEDecoder(
                 nodes = O3TensorProductGate(
                     pooled_irreps, left_irreps=nodes.irreps, name=f"postpool_{i}"
                 )(nodes)
-            nodes = O3Layer(
-                output_irreps, left_irreps=nodes.irreps, name="output"
-            )(nodes)
+            nodes = O3Layer(output_irreps, left_irreps=nodes.irreps, name="output")(
+                nodes
+            )
 
         return nodes
 
