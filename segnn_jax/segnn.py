@@ -59,7 +59,7 @@ def SEDecoder(
                 left_irreps=nodes.irreps,
                 right_irreps=st_graph.node_attributes.irreps,
                 name=f"prepool_{blocks}",
-            )
+            )(nodes, st_graph.node_attributes)
 
             # pooling layer
             if pool == "avg":
@@ -73,10 +73,10 @@ def SEDecoder(
             for i in range(blocks):
                 nodes = O3TensorProductGate(
                     pooled_irreps, left_irreps=nodes.irreps, name=f"postpool_{i}"
-                )(nodes, None)
-            nodes = O3Layer(output_irreps, left_irreps=nodes.irreps, name="output")(
-                nodes, None
-            )
+                )(nodes)
+            nodes = O3Layer(
+                output_irreps, left_irreps=nodes.irreps, name="output"
+            )(nodes)
 
         return nodes
 
@@ -154,10 +154,7 @@ def SEGNNLayer(
             left_irreps=x.irreps,
             right_irreps=node_attribute.irreps,
             name=f"update_{blocks - 1}_{layer_num}",
-        )(
-            x,
-            node_attribute,
-        )
+        )(x, node_attribute)
         # residual connection
         nodes += update
         # message norm

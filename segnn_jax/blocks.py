@@ -11,7 +11,7 @@ from .config import config
 from .graph_utils import SteerableGraphsTuple
 
 InitFn = Callable[[str, Tuple[int, ...], float, Any], jnp.ndarray]
-TensorProductFn = Callable[[e3nn.IrrepsArray, e3nn.IrrepsArray], e3nn.IrrepsArray]
+TensorProductFn = Callable[[e3nn.IrrepsArray, Optional[e3nn.IrrepsArray]], e3nn.IrrepsArray]
 
 
 def uniform_init(
@@ -133,7 +133,7 @@ class O3TensorProduct(hk.Module):
             The output to the weighted tensor product (IrrepsArray).
         """
 
-        if not y:
+        if y is None:
             y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
@@ -199,7 +199,7 @@ def O3TensorProductLegacy(
         path_normalization=path_normalization,
     )
 
-    def _tensor_product(x: e3nn.IrrepsArray, y: e3nn.IrrepsArray) -> TensorProductFn:
+    def _tensor_product(x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None) -> TensorProductFn:
         """Applies an O(3) equivariant linear parametrized tensor product layer.
 
         Args:
@@ -210,7 +210,7 @@ def O3TensorProductLegacy(
             The output to the weighted tensor product (IrrepsArray).
         """
 
-        if not y:
+        if y is None:
             y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
