@@ -208,6 +208,11 @@ class SEGNN(hk.Module):
         self._norm = norm
         self._blocks_per_layer = blocks_per_layer
 
+        self._embedding = O3Embedding(
+            self._hidden_irreps_units[0],
+            embed_msg_features=self._embed_msg_features,
+        )
+
         self._decoder = SEDecoder(
             latent_irreps=self._hidden_irreps_units[-1],
             output_irreps=output_irreps,
@@ -251,12 +256,7 @@ class SEGNN(hk.Module):
     def __call__(self, st_graph: SteerableGraphsTuple) -> jnp.array:
         # embedding
         # NOTE edge embedding is not in the original paper but can get good results
-        st_graph = O3Embedding(
-            self._hidden_irreps_units[0],
-            embed_msg_features=self._embed_msg_features,
-        )(
-            st_graph,
-        )
+        st_graph = self._embedding(st_graph)
 
         # message passing layers
         for n, hrp in enumerate(self._hidden_irreps_units):

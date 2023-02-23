@@ -174,6 +174,8 @@ def train(
         )
         test_loss += loss
     test_loss /= len(loader_test)
+    # ignore compilation time
+    avg_time = avg_time[2:]
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
         wandb.log({"test_loss": float(test_loss), "avg_eval_time": float(avg_time)})

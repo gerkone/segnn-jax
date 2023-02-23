@@ -86,7 +86,7 @@ class O3TensorProduct(hk.Module):
         """
 
         if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((x.shape[0], 1)))
+            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self._output_irreps.lmax > 0:
             warnings.warn(
@@ -210,48 +210,35 @@ class O3TensorProductGate(O3TensorProduct):
         )
 
 
-class O3Embedding(hk.Module):
+def O3Embedding(embed_irreps: e3nn.Irreps, embed_msg_features: bool = True) -> Callable:
     """Linear steerable embedding.
 
     Embeds the graph nodes in the representation space :param embed_irreps:.
 
-    Attributes:
+    Args:
         embed_irreps: Output representation
         embed_msg_features: If true also embed edges/message passing features
+
+    Returns:
+        Function to embed graph nodes (and optionally edges)
     """
 
-    def __init__(self, embed_irreps: e3nn.Irreps, embed_msg_features: bool = True):
-        super().__init__()
-        self.embed_irreps = embed_irreps
-        self.embed_msg_features = embed_msg_features
-
-    def __call__(
-        self,
+    def _embedding(
         st_graph: SteerableGraphsTuple,
     ) -> SteerableGraphsTuple:
-        """Apply linear steerable embedding.
-
-        Embeds the graph nodes in the representation space :param embed_irreps:.
-
-        Args:
-            st_graph (SteerableGraphsTuple): Input graph
-
-        Returns:
-            The graph with replaced node embedding.
-        """
         # TODO update
         graph = st_graph.graph
         nodes = O3TensorProduct(
-            self.embed_irreps,
+            embed_irreps,
             left_irreps=graph.nodes.irreps,
             right_irreps=st_graph.node_attributes.irreps,
             name="o3_embedding_nodes",
         )(graph.nodes, st_graph.node_attributes)
         st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
 
-        if self.embed_msg_features:
+        if embed_msg_features:
             additional_message_features = O3TensorProduct(
-                self.embed_irreps,
+                embed_irreps,
                 left_irreps=graph.nodes.irreps,
                 right_irreps=st_graph.node_attributes.irreps,
                 name="o3_embedding_msg_features",
@@ -264,3 +251,5 @@ class O3Embedding(hk.Module):
             )
 
         return st_graph
+
+    return _embedding

@@ -213,7 +213,7 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
     loader_train = DataLoader(
         dataset_train,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
         collate_fn=numpy_collate,
     )
@@ -221,14 +221,14 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
         dataset_val,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=False,
+        drop_last=True,
         collate_fn=numpy_collate,
     )
     loader_test = DataLoader(
         dataset_test,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=False,
+        drop_last=True,
         collate_fn=numpy_collate,
     )
 
