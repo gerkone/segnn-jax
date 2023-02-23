@@ -135,7 +135,7 @@ class O3TensorProduct(hk.Module):
             The output to the weighted tensor product (IrrepsArray).
         """
 
-        if y is None:
+        if not y:
             y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
@@ -189,6 +189,10 @@ def O3TensorProductLegacy(
         A function that returns the output to the weighted tensor product.
     """
 
+
+    if not right_irreps:
+        right_irreps = e3nn.Irreps("1x0e")
+
     if not init_fn:
         init_fn = uniform_init
 
@@ -214,7 +218,7 @@ def O3TensorProductLegacy(
             The output to the weighted tensor product (IrrepsArray).
         """
 
-        if y is None:
+        if not y:
             y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
@@ -278,9 +282,9 @@ def O3TensorProductGate(
         name=name,
         init_fn=init_fn,
     )
-    if scalar_activation is None:
+    if not scalar_activation:
         scalar_activation = jax.nn.silu
-    if gate_activation is None:
+    if not gate_activation:
         gate_activation = jax.nn.sigmoid
 
     def _gated_tensor_product(
