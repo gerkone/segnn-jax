@@ -1,8 +1,8 @@
 from typing import Callable, List, Optional, Tuple
 
 import e3nn_jax as e3nn
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
 import jax.tree_util as tree
 import numpy as np
 import torch

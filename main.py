@@ -3,17 +3,16 @@ import time
 from functools import partial
 from typing import Tuple, Union
 
-import torch
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
 import optax
+import torch
 import wandb
 
 from experiments import setup_datasets
 from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
-
 
 key = jax.random.PRNGKey(0)
 torch.manual_seed(0)
@@ -68,7 +67,9 @@ def mse(
         return (jnp.power(pred - target, 2)).mean(), state
 
 
-def eval(loader, params, segnn_state, graph_transform, loss_fn) -> Tuple[float, float]:
+def evaluate(
+    loader, params, segnn_state, graph_transform, loss_fn
+) -> Tuple[float, float]:
     eval_loss = []
     eval_times = []
     for data in loader:
@@ -119,7 +120,7 @@ def train(
         target_mean, target_mad = 0, 1
         loss_fn = mse
 
-    eval_fn = partial(eval, graph_transform=graph_transform, loss_fn=loss_fn)
+    eval_fn = partial(evaluate, graph_transform=graph_transform, loss_fn=loss_fn)
 
     @jax.jit
     def update(
