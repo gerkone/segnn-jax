@@ -2,6 +2,7 @@ from typing import Callable, List, Optional, Tuple
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
+import jax
 import jax.tree_util as tree
 import numpy as np
 import torch
@@ -24,6 +25,7 @@ def O3Transform(
     """
     attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
 
+    @jax.jit
     def _o3_transform(
         st_graph: SteerableGraphsTuple,
         loc: jnp.ndarray,
@@ -99,7 +101,7 @@ def NbodyGraphTransform(
 
     if dataset_name == "charged":
         # charged system is a connected graph
-        full_edge_indices = np.array(
+        full_edge_indices = jnp.array(
             [
                 (i + n_nodes * b, j + n_nodes * b)
                 for b in range(batch_size)

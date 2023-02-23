@@ -3,6 +3,7 @@ import time
 from functools import partial
 from typing import Tuple, Union
 
+import torch
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
@@ -13,7 +14,10 @@ import wandb
 from experiments import setup_datasets
 from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
 
+
 key = jax.random.PRNGKey(0)
+torch.manual_seed(0)
+torch.cuda.manual_seed(0)
 
 
 def predict(
@@ -64,6 +68,18 @@ def mse(
         return (jnp.power(pred - target, 2)).mean(), state
 
 
+def eval(loader, params, segnn_state, graph_transform, loss_fn) -> Tuple[float, float]:
+    eval_loss = []
+    eval_times = []
+    for data in loader:
+        graph, target = graph_transform(data)
+        eval_start = time.perf_counter_ns()
+        loss, _ = jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
+        eval_times.append((time.perf_counter_ns() - eval_start) / 1e6)
+        eval_loss.append(loss)
+    return sum(eval_times) / len(eval_times), sum(eval_loss) / len(eval_loss)
+
+
 def train(
     segnn: hk.Transformed, loader_train, loader_val, loader_test, graph_transform, args
 ):
@@ -95,11 +111,15 @@ def train(
         # qm9
         target_mean, target_mad = loader_train.dataset.calc_stats()
         # ignore padded target
-        loss_fn = partial(mae, mask_last=True)
+        loss_fn = partial(
+            mae, mask_last=True, mean_shift=target_mean, mad_shift=target_mad
+        )
     else:
         # nbody
         target_mean, target_mad = 0, 1
         loss_fn = mse
+
+    eval_fn = partial(eval, graph_transform=graph_transform, loss_fn=loss_fn)
 
     @jax.jit
     def update(
@@ -117,6 +137,7 @@ def train(
 
     opt_state = opt_init(params)
     avg_time = []
+    best_val = 1e10
 
     for e in range(args.epochs):
         train_loss = 0.0
@@ -129,59 +150,43 @@ def train(
                 params, segnn_state, graph, target, opt_state
             )
             train_loss += loss
-        train_time = (time.perf_counter_ns() - train_start) / 1e6 / len(loader_train)
+        train_time = (time.perf_counter_ns() - train_start) / 1e6
         train_loss /= len(loader_train)
         wandb_logs = {"train_loss": float(train_loss), "update_time": float(train_time)}
         print(
-            "[Epoch {:>4}] training loss {:.6f}{}, update time {:.3f}ms".format(
-                e + 1,
-                train_loss,
-                (" (normalized)" if args.dataset == "qm9" else ""),
-                train_time,
-            ),
+            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {train_time:.2f}ms",
             end="",
         )
         if e % args.val_freq == 0:
-            val_loss = 0
-            eval_start = time.perf_counter_ns()
-            for data in loader_val:
-                graph, target = graph_transform(data)
-                loss, _ = jax.lax.stop_gradient(
-                    loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
-                )
-                val_loss += loss
-            eval_time = (time.perf_counter_ns() - eval_start) / 1e6 / len(loader_val)
+            eval_time, val_loss = eval_fn(loader_val, params, segnn_state)
             avg_time.append(eval_time)
-            val_loss /= len(loader_val)
+            tag = ""
+            if val_loss < best_val:
+                best_val = val_loss
+                _, test_loss_ckp = eval_fn(loader_test, params, segnn_state)
+                wandb_logs.update({"test_loss": float(test_loss_ckp)})
+                tag = "(BEST)"
             wandb_logs.update(
                 {"val_loss": float(val_loss), "eval_time": float(eval_time)}
             )
-            print(
-                " - validation loss {:.6f}, eval time {:.3f}ms".format(
-                    val_loss, eval_time
-                ),
-                end="",
-            )
+            print(f" - val loss {val_loss:.6f} {tag}, eval {eval_time:.2f}ms", end="")
+
         print()
         if args.wandb:
             wandb.log(wandb_logs)
 
     test_loss = 0
-    for data in loader_test:
-        graph, target = graph_transform(data)
-        loss, _ = jax.lax.stop_gradient(
-            loss_fn(params, segnn_state, graph, target, target_mean, target_mad)
-        )
-        test_loss += loss
-    test_loss /= len(loader_test)
+    _, test_loss = eval_fn(loader_test, params, segnn_state)
     # ignore compilation time
     avg_time = avg_time[2:]
     avg_time = sum(avg_time) / len(avg_time)
     if args.wandb:
         wandb.log({"test_loss": float(test_loss), "avg_eval_time": float(avg_time)})
     print(
-        "Training done. Test loss {:.6f} - "
-        "average eval time {:.3f}ms".format(test_loss, avg_time)
+        "Training done.\n"
+        f"Final test loss {test_loss:.6f} - "
+        f"checkpoint test loss {test_loss_ckp:.6f}.\n"
+        f"Average (model) eval time {avg_time:.2f}ms"
     )
 
 
