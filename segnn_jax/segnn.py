@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
 
-from .blocks import O3Embedding, O3TensorProduct, O3TensorProductGate
+from .blocks import O3Embedding, O3Layer, O3TensorProductGate
 from .graph_utils import SteerableGraphsTuple, pooling
 
 
@@ -44,7 +44,7 @@ def SEDecoder(
             )(nodes, st_graph.node_attributes)
 
         if task == "node":
-            nodes = O3TensorProduct(
+            nodes = O3Layer(
                 output_irreps,
                 left_irreps=nodes.irreps,
                 right_irreps=st_graph.node_attributes.irreps,
@@ -54,7 +54,7 @@ def SEDecoder(
         if task == "graph":
             # pool over graph
             pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
-            nodes = O3TensorProduct(
+            nodes = O3Layer(
                 pooled_irreps,
                 left_irreps=nodes.irreps,
                 right_irreps=st_graph.node_attributes.irreps,
@@ -74,9 +74,9 @@ def SEDecoder(
                 nodes = O3TensorProductGate(
                     pooled_irreps, left_irreps=nodes.irreps, name=f"postpool_{i}"
                 )(nodes, None)
-            nodes = O3TensorProduct(
-                output_irreps, left_irreps=nodes.irreps, name="output"
-            )(nodes, None)
+            nodes = O3Layer(output_irreps, left_irreps=nodes.irreps, name="output")(
+                nodes, None
+            )
 
         return nodes
 
@@ -149,11 +149,11 @@ def SEGNNLayer(
                 name=f"update_{i}_{layer_num}",
             )(x, node_attribute)
         # last update layer without activation
-        update = O3TensorProduct(
+        update = O3Layer(
             output_irreps,
             left_irreps=x.irreps,
             right_irreps=node_attribute.irreps,
-            name=f"update_{blocks}_{layer_num}",
+            name=f"update_{blocks - 1}_{layer_num}",
         )(
             x,
             node_attribute,
@@ -210,7 +210,7 @@ class SEGNN(hk.Module):
 
         self._embedding = O3Embedding(
             self._hidden_irreps_units[0],
-            embed_msg_features=self._embed_msg_features,
+            embed_edges=self._embed_msg_features,
         )
 
         self._decoder = SEDecoder(
@@ -254,7 +254,7 @@ class SEGNN(hk.Module):
         )
 
     def __call__(self, st_graph: SteerableGraphsTuple) -> jnp.array:
-        # embedding
+        # node (and edge) embedding
         # NOTE edge embedding is not in the original paper but can get good results
         st_graph = self._embedding(st_graph)
 
@@ -262,7 +262,7 @@ class SEGNN(hk.Module):
         for n, hrp in enumerate(self._hidden_irreps_units):
             st_graph = self._propagate(st_graph, irreps=hrp, layer_num=n)
 
-        # decoder
+        # decoder/pooler
         nodes = self._decoder(st_graph)
 
         return jnp.squeeze(nodes.array)
