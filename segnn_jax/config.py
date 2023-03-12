@@ -10,3 +10,7 @@ __conf = {
 
 def config(key):
     return __conf[key]
+
+
+def set_config(key, val):
+    __conf[key] = val
