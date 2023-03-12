@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
@@ -10,10 +10,8 @@ from e3nn_jax._src.tensor_products import naive_broadcast_decorator
 from .config import config
 from .graph_utils import SteerableGraphsTuple
 
-InitFn = Callable[[str, Tuple[int, ...], float, Any], jnp.ndarray]
-TensorProductFn = Callable[
-    [e3nn.IrrepsArray, Optional[e3nn.IrrepsArray]], e3nn.IrrepsArray
-]
+InitFn = Callable[[str, Tuple[int, ...], float, jnp.dtype], jnp.ndarray]
+TensorProductFn = Callable[[e3nn.IrrepsArray, e3nn.IrrepsArray], e3nn.IrrepsArray]
 
 
 def uniform_init(
@@ -21,7 +19,7 @@ def uniform_init(
     path_shape: Tuple[int, ...],
     weight_std: float,
     dtype: jnp.dtype = config("default_dtype"),
-):
+) -> jnp.ndarray:
     return hk.get_parameter(
         name,
         shape=path_shape,
@@ -57,9 +55,18 @@ class O3TensorProduct(hk.Module):
     ):
         super().__init__(name)
 
-        self.output_irreps = output_irreps
         if not right_irreps:
             right_irreps = e3nn.Irreps("1x0e")
+
+        if not isinstance(output_irreps, e3nn.Irreps):
+            output_irreps = e3nn.Irreps(output_irreps)
+        if not isinstance(left_irreps, e3nn.Irreps):
+            left_irreps = e3nn.Irreps(left_irreps)
+        if not isinstance(right_irreps, e3nn.Irreps):
+            right_irreps = e3nn.Irreps(right_irreps)
+
+        self.output_irreps = output_irreps
+
         self.right_irreps = right_irreps
         self.left_irreps = left_irreps
 
@@ -189,9 +196,15 @@ def O3TensorProductLegacy(
         A function that returns the output to the weighted tensor product.
     """
 
-
     if not right_irreps:
         right_irreps = e3nn.Irreps("1x0e")
+
+    if not isinstance(output_irreps, e3nn.Irreps):
+        output_irreps = e3nn.Irreps(output_irreps)
+    if not isinstance(left_irreps, e3nn.Irreps):
+        left_irreps = e3nn.Irreps(left_irreps)
+    if not isinstance(right_irreps, e3nn.Irreps):
+        right_irreps = e3nn.Irreps(right_irreps)
 
     if not init_fn:
         init_fn = uniform_init
@@ -270,6 +283,10 @@ def O3TensorProductGate(
     Returns:
         Function that applies the gated tensor product layer.
     """
+
+    if not isinstance(output_irreps, e3nn.Irreps):
+        output_irreps = e3nn.Irreps(output_irreps)
+
     # lift output with gating scalars
     gate_irreps = e3nn.Irreps(
         f"{output_irreps.num_irreps - output_irreps.count('0e')}x0e"

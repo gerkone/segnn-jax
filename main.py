@@ -76,19 +76,22 @@ def evaluate(
         graph, target = graph_transform(data)
         eval_start = time.perf_counter_ns()
         loss, _ = jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
-        eval_times.append((time.perf_counter_ns() - eval_start) / 1e6)
         eval_loss.append(loss)
+        eval_times.append((time.perf_counter_ns() - eval_start) / 1e6)
+
     return sum(eval_times) / len(eval_times), sum(eval_loss) / len(eval_loss)
 
 
 def train(
     segnn: hk.Transformed, loader_train, loader_val, loader_test, graph_transform, args
 ):
-    print(f"Starting {args.epochs} epochs on {args.dataset}.")
-
-    print("Jitting...")
     init_graph, _ = graph_transform(next(iter(loader_train)))
     params, segnn_state = segnn.init(key, init_graph)
+
+    print(
+        f"Starting {args.epochs} epochs on {args.dataset} with {hk.data_structures.tree_size(params)} parameters."
+    )
+    print("Jitting...")
 
     total_steps = args.epochs * len(loader_train)
 
@@ -112,15 +115,17 @@ def train(
         # qm9
         target_mean, target_mad = loader_train.dataset.calc_stats()
         # ignore padded target
-        loss_fn = partial(
-            mae, mask_last=True, mean_shift=target_mean, mad_shift=target_mad
+        loss_fn = partial(mae, mask_last=True)
+        eval_loss_fn = partial(
+            mse, mask_last=True, mean_shift=target_mean, mad_shift=target_mad
         )
     else:
         # nbody
         target_mean, target_mad = 0, 1
         loss_fn = mse
+        eval_loss_fn = mse
 
-    eval_fn = partial(evaluate, graph_transform=graph_transform, loss_fn=loss_fn)
+    eval_fn = partial(evaluate, graph_transform=graph_transform, loss_fn=eval_loss_fn)
 
     @jax.jit
     def update(
@@ -166,11 +171,11 @@ def train(
                 best_val = val_loss
                 _, test_loss_ckp = eval_fn(loader_test, params, segnn_state)
                 wandb_logs.update({"test_loss": float(test_loss_ckp)})
-                tag = "(BEST)"
+                tag = " (BEST)"
             wandb_logs.update(
                 {"val_loss": float(val_loss), "eval_time": float(eval_time)}
             )
-            print(f" - val loss {val_loss:.6f} {tag}, eval {eval_time:.2f}ms", end="")
+            print(f" - val loss {val_loss:.6f}{tag}, eval {eval_time:.2f}ms", end="")
 
         print()
         if args.wandb:

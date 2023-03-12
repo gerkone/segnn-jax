@@ -122,7 +122,7 @@ def SEGNNLayer(
             msg = O3TensorProductGate(
                 output_irreps,
                 left_irreps=msg.irreps,
-                right_irreps=edge_attribute.irreps,
+                right_irreps=getattr(edge_attribute, "irreps", None),
                 name=f"message_{i}_{layer_num}",
             )(msg, edge_attribute)
         # NOTE: original implementation only applied batch norm to messages
@@ -145,14 +145,14 @@ def SEGNNLayer(
             x = O3TensorProductGate(
                 output_irreps,
                 left_irreps=x.irreps,
-                right_irreps=node_attribute.irreps,
+                right_irreps=getattr(node_attribute, "irreps", None),
                 name=f"update_{i}_{layer_num}",
             )(x, node_attribute)
         # last update layer without activation
         update = O3Layer(
             output_irreps,
             left_irreps=x.irreps,
-            right_irreps=node_attribute.irreps,
+            right_irreps=getattr(node_attribute, "irreps", None),
             name=f"update_{blocks - 1}_{layer_num}",
         )(x, node_attribute)
         # residual connection
