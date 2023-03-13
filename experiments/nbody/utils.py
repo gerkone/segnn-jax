@@ -92,7 +92,7 @@ def NbodyGraphTransform(
     dataset_name: str,
     n_nodes: int,
     batch_size: int,
-    neighbours: Optional[int] = 0,
+    neighbours: Optional[int] = 6,
     relative_target: bool = False,
 ) -> Callable:
     """
@@ -124,7 +124,7 @@ def NbodyGraphTransform(
             batch = batch.repeat_interleave(n_nodes).long()
             edge_indices = knn_graph(torch.from_numpy(np.array(loc)), neighbours, batch)
             # switched by default
-            senders, receivers = jnp.array(edge_indices[1]), jnp.array(edge_indices[0])
+            senders, receivers = jnp.array(edge_indices[0]), jnp.array(edge_indices[1])
 
         st_graph = SteerableGraphsTuple(
             graph=GraphsTuple(
@@ -216,21 +216,21 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
         dataset_train,
         batch_size=args.batch_size,
         shuffle=True,
-        drop_last=False,
+        drop_last=True,
         collate_fn=numpy_collate,
     )
     loader_val = DataLoader(
         dataset_val,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=numpy_collate,
     )
     loader_test = DataLoader(
         dataset_test,
         batch_size=args.batch_size,
         shuffle=False,
-        drop_last=True,
+        drop_last=False,
         collate_fn=numpy_collate,
     )
 
