@@ -1,39 +1,17 @@
 import e3nn_jax as e3nn
 import haiku as hk
-import jax.numpy as jnp
-import jraph
 import pytest
 from e3nn_jax.util import assert_equivariant
 
-from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
-
-
-@pytest.fixture
-def rand_graph():
-    def _rand_graph(n_graphs: int = 1):
-        return SteerableGraphsTuple(
-            graph=jraph.GraphsTuple(
-                nodes=e3nn.IrrepsArray("1x1o", jnp.ones((n_graphs * 5, 3))),
-                edges=None,
-                senders=jnp.zeros((10 * n_graphs,), dtype=jnp.int32),
-                receivers=jnp.zeros((10 * n_graphs,), dtype=jnp.int32),
-                n_node=jnp.array([5] * n_graphs),
-                n_edge=jnp.array([10] * n_graphs),
-                globals=None,
-            ),
-            additional_message_features=None,
-            edge_attributes=None,
-            node_attributes=e3nn.IrrepsArray("1x0e+1x1o", jnp.ones((n_graphs * 5, 4))),
-        )
-
-    return _rand_graph
+from segnn_jax import SEGNN, weight_balanced_irreps
 
 
 @pytest.mark.parametrize("task", ["graph", "node"])
 @pytest.mark.parametrize("norm", ["none", "instance"])
-def test_equivariance(key, rand_graph, norm, task):
-    import segnn_jax.config
-    segnn_jax.config.set_config("o3_layer", "new")
+def test_equivariance(key, dummy_graph, norm, task):
+    import segnn_jax.blocks
+
+    segnn_jax.blocks.O3Layer = segnn_jax.blocks.O3TensorProduct
 
     segnn = lambda x: SEGNN(
         hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
@@ -44,7 +22,7 @@ def test_equivariance(key, rand_graph, norm, task):
     )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
-    graph = rand_graph()
+    graph = dummy_graph()
     params, segnn_state = segnn.init(key, graph)
 
     def wrapper(x):
@@ -60,9 +38,10 @@ def test_equivariance(key, rand_graph, norm, task):
 
 @pytest.mark.parametrize("task", ["graph", "node"])
 @pytest.mark.parametrize("norm", ["none", "instance"])
-def test_equivariance_legacy(key, rand_graph, norm, task):
-    import segnn_jax.config
-    segnn_jax.config.set_config("o3_layer", "legacy")
+def test_equivariance_legacy(key, dummy_graph, norm, task):
+    import segnn_jax.blocks
+
+    segnn_jax.blocks.O3Layer = segnn_jax.blocks.O3TensorProductLegacy
 
     segnn = lambda x: SEGNN(
         hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
@@ -73,7 +52,7 @@ def test_equivariance_legacy(key, rand_graph, norm, task):
     )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
-    graph = rand_graph()
+    graph = dummy_graph()
     params, segnn_state = segnn.init(key, graph)
 
     def wrapper(x):
@@ -85,3 +64,7 @@ def test_equivariance_legacy(key, rand_graph, norm, task):
         return e3nn.IrrepsArray("1x1o", y)
 
     assert_equivariant(wrapper, key, args_in=(e3nn.normal("1x1o", key, (5,)),))
+
+
+if __name__ == "__main__":
+    pytest.main()

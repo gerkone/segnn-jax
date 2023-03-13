@@ -13,7 +13,7 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 @pytest.fixture
-def rand_graph():
+def dummy_graph():
     def _rand_graph(n_graphs: int = 1):
         return SteerableGraphsTuple(
             graph=jraph.GraphsTuple(
