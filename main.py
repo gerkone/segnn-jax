@@ -70,16 +70,16 @@ def mse(
 def evaluate(
     loader, params, segnn_state, graph_transform, loss_fn
 ) -> Tuple[float, float]:
-    eval_loss = []
-    eval_times = []
+    eval_loss = 0.0
+    eval_times = 0.0
     for data in loader:
         graph, target = graph_transform(data)
         eval_start = time.perf_counter_ns()
         loss, _ = jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
-        eval_loss.append(loss)
-        eval_times.append((time.perf_counter_ns() - eval_start) / 1e6)
+        eval_loss += loss
+        eval_times += (time.perf_counter_ns() - eval_start) / 1e6
 
-    return sum(eval_times) / len(eval_times), sum(eval_loss) / len(eval_loss)
+    return eval_times / len(loader), eval_loss / len(loader)
 
 
 def train(
