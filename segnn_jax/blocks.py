@@ -125,9 +125,15 @@ class O3TensorProduct(hk.Module):
                 f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b)
             )
 
-            self.biases = lambda x: e3nn.concatenate(
-                [x.filter("0e") + b, x.filter(drop="0e")], axis=1
-            )
+            # TODO: could be improved
+            def _wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+                scalars = x.filter("0e")
+                other = x.filter(drop="0e")
+                return e3nn.concatenate(
+                    [scalars + b.broadcast_to(scalars.shape), other], axis=1
+                )
+
+            self.biases = _wrapper
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
@@ -147,9 +153,9 @@ class O3TensorProduct(hk.Module):
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
             warnings.warn(
-                f"The specified output irreps ({self.output_irreps}) are not scalars but both "
-                "operands are. This can have undesired behaviour such as null output Try "
-                "redistributing them into scalars or chose higher orders for the operands."
+                f"The specified output irreps ({self.output_irreps}) are not scalars "
+                "but both operands are. This can have undesired behaviour (NaN). Try "
+                "redistributing them into scalars or choose higher orders."
             )
 
         assert (
