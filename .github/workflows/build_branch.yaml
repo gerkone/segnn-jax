@@ -1,4 +1,4 @@
-name: Tests/Publish on PyPi
+name: Build
 
 on: push
 
