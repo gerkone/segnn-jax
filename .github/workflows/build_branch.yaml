@@ -3,6 +3,31 @@ name: Publish on PyPi
 on: push
 
 jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Set up docker image
+      uses: actions/setup-python@v3
+      with:
+        python-version: "3.10"
+    - name: Install dependencies
+      run: >-
+        python -m
+        pip install
+        -r requirements.txt
+        --user
+    - name: Install pytest
+      run: >-
+        python -m
+        pip install
+        pytest
+        --user
+    - name: Run tests
+      run: >-
+        python -m pytest tests/
+
   build-publish:
     name: Build and publish
     runs-on: ubuntu-latest
