@@ -4,7 +4,7 @@ __conf = {
     "gradient_normalization": "element",  # "element" or "path"
     "path_normalization": "element",  # "element" or "path"
     "default_dtype": jnp.float32,
-    "o3_layer": "legacy",  # "new" or "legacy"
+    "o3_layer": "new",  # "new" or "legacy"
 }
 
 
