@@ -1,4 +1,4 @@
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
 
-from .blocks import BatchNormWrapper, O3Embedding, O3Layer, O3TensorProductGate
+from .blocks import O3Embedding, O3Layer, O3TensorProductGate
 from .graph_utils import SteerableGraphsTuple, pooling
 
 
@@ -30,7 +30,7 @@ def SEDecoder(
     """
 
     assert task in ["node", "graph"], f"Unknown task {task}"
-    assert pool in ["avg", "sum", "none", None], f"Unknown pooling {pool}"
+    assert pool in ["avg", "sum", "none", None], f"Unknown pooling '{pool}'"
 
     def _ApplySEDecoder(st_graph: SteerableGraphsTuple):
         nodes = st_graph.graph.nodes
@@ -83,27 +83,30 @@ def SEDecoder(
     return _ApplySEDecoder
 
 
-def SEGNNLayer(
-    output_irreps: e3nn.Irreps,
-    layer_num: int,
-    blocks: int = 2,
-    norm: Optional[str] = None,
-) -> Tuple[Callable, Callable]:
-    """Steerable E(3) equivariant layer
-    Args:
+class SEGNNLayer(hk.Module):
+    """Steerable E(3) equivariant layer.
+    
+    Attributes:
         output_irreps: Layer output representation
         layer_num: Numbering of the layer
         blocks: Number of tensor product blocks in the layer
         norm: Normalization type. Either be None, 'instance' or 'batch'
-
-    Returns:
-        Two function compatible with the jraph networks, message and node
-        update mlps respectively.
     """
-
-    assert norm in ["batch", "instance", "none", None], f"Unknown normalization {norm}"
+    def __init__(
+        self,
+        output_irreps: e3nn.Irreps,
+        layer_num: int,
+        blocks: int = 2,
+        norm: Optional[str] = None,
+    ):
+        super().__init__(name=f"layer_{layer_num}")
+        assert norm in ["batch", "instance", "none", None], f"Unknown norm '{norm}'"
+        self._output_irreps = output_irreps
+        self._blocks = blocks
+        self._norm = norm
 
     def _message(
+        self,
         edge_attribute: e3nn.IrrepsArray,
         additional_message_features: e3nn.IrrepsArray,
         edge_features: Any,
@@ -118,21 +121,20 @@ def SEGNNLayer(
         if additional_message_features is not None:
             msg = e3nn.concatenate([msg, additional_message_features], axis=-1)
         # message mlp (phi_m in the paper) steered by edge attributeibutes
-        for i in range(blocks):
+        for i in range(self._blocks):
             msg = O3TensorProductGate(
-                output_irreps,
+                self._output_irreps,
                 left_irreps=msg.irreps,
                 right_irreps=getattr(edge_attribute, "irreps", None),
-                name=f"message_{i}_{layer_num}",
+                name=f"tp_{i}",
             )(msg, edge_attribute)
         # NOTE: original implementation only applied batch norm to messages
-        if norm == "batch":
-            msg = BatchNormWrapper(
-                name=f"update_norm_{layer_num}", irreps=output_irreps
-            )(msg)
+        if self._norm == "batch":
+            msg = e3nn.haiku.BatchNorm( irreps=self._output_irreps)(msg)
         return msg
 
     def _update(
+        self,
         node_attribute: e3nn.IrrepsArray,
         nodes: e3nn.IrrepsArray,
         senders: Any,
@@ -143,32 +145,54 @@ def SEGNNLayer(
         _ = globals_
         x = e3nn.concatenate((nodes, msg), axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
-        for i in range(blocks - 1):
+        for i in range(self._blocks - 1):
             x = O3TensorProductGate(
-                output_irreps,
+                self._output_irreps,
                 left_irreps=x.irreps,
                 right_irreps=getattr(node_attribute, "irreps", None),
-                name=f"update_{i}_{layer_num}",
+                name=f"tp_{i}",
             )(x, node_attribute)
         # last update layer without activation
         update = O3Layer(
-            output_irreps,
+            self._output_irreps,
             left_irreps=x.irreps,
             right_irreps=getattr(node_attribute, "irreps", None),
-            name=f"update_{blocks - 1}_{layer_num}",
+            name=f"tp_{self._blocks - 1}",
         )(x, node_attribute)
         # residual connection
         nodes += update
         # message norm
-        if norm in ["batch", "instance"]:
-            nodes = BatchNormWrapper(
-                name=f"message_norm_{layer_num}",
-                irreps=output_irreps,
-                instance=(norm == "instance"),
+        if self._norm in ["batch", "instance"]:
+            nodes = e3nn.haiku.BatchNorm(
+                irreps=self._output_irreps,
+                instance=(self._norm == "instance"),
             )(nodes)
         return nodes
+    
+    def __call__(self, st_graph: SteerableGraphsTuple) -> SteerableGraphsTuple:
+        """Perform a message passing step.
 
-    return _message, _update
+        Args:
+            st_graph: Input graph
+            irreps: Irreps in the hidden layer
+            layer_num: Numbering of the layer
+
+        Returns:
+            The updated graph
+        """
+        # NOTE node_attributes, edge_attributes and additional_message_features
+        #  are never updated within the message passing layers
+        return st_graph._replace(
+            graph=jraph.GraphNetwork(
+                update_node_fn=Partial(self._update, st_graph.node_attributes),
+                update_edge_fn=Partial(
+                    self._message,
+                    st_graph.edge_attributes,
+                    st_graph.additional_message_features,
+                ),
+                aggregate_edges_for_nodes_fn=jraph.segment_sum,
+            )(st_graph.graph)
+        )
 
 
 class SEGNN(hk.Module):
@@ -198,7 +222,7 @@ class SEGNN(hk.Module):
         blocks_per_layer: int = 2,
         embed_msg_features: bool = False,
     ):
-        super(SEGNN, self).__init__()  # noqa # pylint: disable=R1725
+        super().__init__()
 
         if isinstance(hidden_irreps, e3nn.Irreps):
             self._hidden_irreps_units = num_layers * [hidden_irreps]
@@ -221,47 +245,15 @@ class SEGNN(hk.Module):
             pool=pool,
         )
 
-    def _propagate(
-        self, st_graph: SteerableGraphsTuple, irreps: e3nn.Irreps, layer_num: int
-    ) -> SteerableGraphsTuple:
-        """Perform a message passing step.
-
-        Args:
-            st_graph: Input graph
-            irreps: Irreps in the hidden layer
-            layer_num: Numbering of the layer
-
-        Returns:
-            The updated graph
-        """
-        message_fn, update_fn = SEGNNLayer(
-            output_irreps=irreps,
-            layer_num=layer_num,
-            blocks=self._blocks_per_layer,
-            norm=self._norm,
-        )
-        # NOTE node_attributes, edge_attributes and additional_message_features
-        #  are never updated within the message passing layers
-        return st_graph._replace(
-            graph=jraph.GraphNetwork(
-                update_node_fn=Partial(update_fn, st_graph.node_attributes),
-                update_edge_fn=Partial(
-                    message_fn,
-                    st_graph.edge_attributes,
-                    st_graph.additional_message_features,
-                ),
-                aggregate_edges_for_nodes_fn=jraph.segment_sum,
-            )(st_graph.graph)
-        )
-
     def __call__(self, st_graph: SteerableGraphsTuple) -> jnp.array:
         # node (and edge) embedding
-        # NOTE edge embedding is not in the original paper but can get good results
         st_graph = self._embedding(st_graph)
 
-        # message passing layers
+        # message passing
         for n, hrp in enumerate(self._hidden_irreps_units):
-            st_graph = self._propagate(st_graph, irreps=hrp, layer_num=n)
+            st_graph = SEGNNLayer(
+                output_irreps=hrp, layer_num=n, norm=self._norm
+            )(st_graph)
 
         # decoder/pooler
         nodes = self._decoder(st_graph)

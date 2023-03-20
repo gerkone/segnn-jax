@@ -242,9 +242,9 @@ def O3TensorProductLegacy(
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
             warnings.warn(
-                f"The specified output irreps ({output_irreps}) are not scalars but both "
-                "operands are. This can have undesired behaviour such as null output Try "
-                "redistributing them into scalars or chose higher orders for the operands."
+                f"The specified output irreps ({output_irreps}) are not scalars "
+                "but both operands are. This can have undesired behaviour (NaN). Try "
+                "redistributing them into scalars or choose higher orders."
             )
 
         assert (
@@ -345,6 +345,7 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
         )(graph.nodes, st_graph.node_attributes)
         st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
 
+        # NOTE edge embedding is not in the original paper but can get good results
         if embed_edges:
             additional_message_features = O3Layer(
                 embed_irreps,
@@ -362,15 +363,3 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
         return st_graph
 
     return _embedding
-
-
-class BatchNormWrapper(hk.Module):
-    """Named wrapper for e3nn.haiku.BatchNorm."""
-
-    def __init__(self, name: str = None, **kwargs):
-        # TODO only to name norms. Remove when e3nn.haiku.BatchNorm supports naming
-        super().__init__(name=name)
-        self._norm = e3nn.haiku.BatchNorm(**kwargs)
-
-    def __call__(self, x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
-        return self._norm(x)
