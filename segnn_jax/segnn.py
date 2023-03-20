@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
@@ -6,18 +6,64 @@ import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
 
-from .blocks import O3Embedding, O3Layer, O3TensorProductGate
+from .blocks import O3Layer, O3TensorProductGate
 from .graph_utils import SteerableGraphsTuple, pooling
 
 
-def SEDecoder(
+def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable:
+    """Linear steerable embedding.
+
+    Embeds the graph nodes in the representation space :param embed_irreps:.
+
+    Args:
+        embed_irreps: Output representation
+        embed_edges: If true also embed edges/message passing features
+
+    Returns:
+        Function to embed graph nodes (and optionally edges)
+    """
+
+    def _embedding(
+        st_graph: SteerableGraphsTuple,
+    ) -> SteerableGraphsTuple:
+        # TODO update
+        graph = st_graph.graph
+        nodes = O3Layer(
+            embed_irreps,
+            left_irreps=graph.nodes.irreps,
+            right_irreps=st_graph.node_attributes.irreps,
+            name="embedding_nodes",
+        )(graph.nodes, st_graph.node_attributes)
+        st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
+
+        # NOTE edge embedding is not in the original paper but can get good results
+        if embed_edges:
+            additional_message_features = O3Layer(
+                embed_irreps,
+                left_irreps=graph.nodes.irreps,
+                right_irreps=st_graph.node_attributes.irreps,
+                name="embedding_msg_features",
+            )(
+                st_graph.additional_message_features,
+                st_graph.edge_attributes,
+            )
+            st_graph = st_graph._replace(
+                additional_message_features=additional_message_features
+            )
+
+        return st_graph
+
+    return _embedding
+
+
+def O3Decoder(
     latent_irreps: e3nn.Irreps,
     output_irreps: e3nn.Irreps,
     blocks: int = 1,
     task: str = "graph",
     pool: Optional[str] = "avg",
 ):
-    """Steerable E(3) pooler and decoder.
+    """Steerable pooler and decoder.
 
     Args:
         latent_irreps: Representation from the previous block
@@ -32,7 +78,7 @@ def SEDecoder(
     assert task in ["node", "graph"], f"Unknown task {task}"
     assert pool in ["avg", "sum", "none", None], f"Unknown pooling '{pool}'"
 
-    def _ApplySEDecoder(st_graph: SteerableGraphsTuple):
+    def _decoder(st_graph: SteerableGraphsTuple):
         nodes = st_graph.graph.nodes
         # pre pool block
         for i in range(blocks):
@@ -80,18 +126,19 @@ def SEDecoder(
 
         return nodes
 
-    return _ApplySEDecoder
+    return _decoder
 
 
 class SEGNNLayer(hk.Module):
     """Steerable E(3) equivariant layer.
-    
+
     Attributes:
         output_irreps: Layer output representation
         layer_num: Numbering of the layer
         blocks: Number of tensor product blocks in the layer
         norm: Normalization type. Either be None, 'instance' or 'batch'
     """
+
     def __init__(
         self,
         output_irreps: e3nn.Irreps,
@@ -130,7 +177,7 @@ class SEGNNLayer(hk.Module):
             )(msg, edge_attribute)
         # NOTE: original implementation only applied batch norm to messages
         if self._norm == "batch":
-            msg = e3nn.haiku.BatchNorm( irreps=self._output_irreps)(msg)
+            msg = e3nn.haiku.BatchNorm(irreps=self._output_irreps)(msg)
         return msg
 
     def _update(
@@ -168,7 +215,7 @@ class SEGNNLayer(hk.Module):
                 instance=(self._norm == "instance"),
             )(nodes)
         return nodes
-    
+
     def __call__(self, st_graph: SteerableGraphsTuple) -> SteerableGraphsTuple:
         """Perform a message passing step.
 
@@ -238,7 +285,7 @@ class SEGNN(hk.Module):
             embed_edges=self._embed_msg_features,
         )
 
-        self._decoder = SEDecoder(
+        self._decoder = O3Decoder(
             latent_irreps=self._hidden_irreps_units[-1],
             output_irreps=output_irreps,
             task=task,
@@ -251,9 +298,9 @@ class SEGNN(hk.Module):
 
         # message passing
         for n, hrp in enumerate(self._hidden_irreps_units):
-            st_graph = SEGNNLayer(
-                output_irreps=hrp, layer_num=n, norm=self._norm
-            )(st_graph)
+            st_graph = SEGNNLayer(output_irreps=hrp, layer_num=n, norm=self._norm)(
+                st_graph
+            )
 
         # decoder/pooler
         nodes = self._decoder(st_graph)

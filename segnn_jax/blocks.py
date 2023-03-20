@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from e3nn_jax._src.tensor_products import naive_broadcast_decorator
 
 from .config import config
-from .graph_utils import SteerableGraphsTuple
 
 InitFn = Callable[[str, Tuple[int, ...], float, jnp.dtype], jnp.ndarray]
 TensorProductFn = Callable[[e3nn.IrrepsArray, e3nn.IrrepsArray], e3nn.IrrepsArray]
@@ -317,49 +316,3 @@ def O3TensorProductGate(
         return e3nn.gate(tp, even_act=scalar_activation, odd_gate_act=gate_activation)
 
     return _gated_tensor_product
-
-
-def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable:
-    """Linear steerable embedding.
-
-    Embeds the graph nodes in the representation space :param embed_irreps:.
-
-    Args:
-        embed_irreps: Output representation
-        embed_edges: If true also embed edges/message passing features
-
-    Returns:
-        Function to embed graph nodes (and optionally edges)
-    """
-
-    def _embedding(
-        st_graph: SteerableGraphsTuple,
-    ) -> SteerableGraphsTuple:
-        # TODO update
-        graph = st_graph.graph
-        nodes = O3Layer(
-            embed_irreps,
-            left_irreps=graph.nodes.irreps,
-            right_irreps=st_graph.node_attributes.irreps,
-            name="embedding_nodes",
-        )(graph.nodes, st_graph.node_attributes)
-        st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
-
-        # NOTE edge embedding is not in the original paper but can get good results
-        if embed_edges:
-            additional_message_features = O3Layer(
-                embed_irreps,
-                left_irreps=graph.nodes.irreps,
-                right_irreps=st_graph.node_attributes.irreps,
-                name="embedding_msg_features",
-            )(
-                st_graph.additional_message_features,
-                st_graph.edge_attributes,
-            )
-            st_graph = st_graph._replace(
-                additional_message_features=additional_message_features
-            )
-
-        return st_graph
-
-    return _embedding
