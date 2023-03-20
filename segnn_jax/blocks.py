@@ -362,3 +362,15 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
         return st_graph
 
     return _embedding
+
+
+class BatchNormWrapper(hk.Module):
+    """Named wrapper for e3nn.haiku.BatchNorm."""
+
+    def __init__(self, name: str = None, **kwargs):
+        # TODO only to name norms. Remove when e3nn.haiku.BatchNorm supports naming
+        super().__init__(name=name)
+        self._norm = e3nn.haiku.BatchNorm(**kwargs)
+
+    def __call__(self, x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+        return self._norm(x)

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
 
-from .blocks import O3Embedding, O3Layer, O3TensorProductGate
+from .blocks import BatchNormWrapper, O3Embedding, O3Layer, O3TensorProductGate
 from .graph_utils import SteerableGraphsTuple, pooling
 
 
@@ -127,7 +127,9 @@ def SEGNNLayer(
             )(msg, edge_attribute)
         # NOTE: original implementation only applied batch norm to messages
         if norm == "batch":
-            msg = e3nn.haiku.BatchNorm(irreps=output_irreps)(msg)
+            msg = BatchNormWrapper(
+                name=f"update_norm_{layer_num}", irreps=output_irreps
+            )(msg)
         return msg
 
     def _update(
@@ -159,8 +161,10 @@ def SEGNNLayer(
         nodes += update
         # message norm
         if norm in ["batch", "instance"]:
-            nodes = e3nn.haiku.BatchNorm(
-                irreps=output_irreps, instance=(norm == "instance")
+            nodes = BatchNormWrapper(
+                name=f"message_norm_{layer_num}",
+                irreps=output_irreps,
+                instance=(norm == "instance"),
             )(nodes)
         return nodes
 

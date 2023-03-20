@@ -90,9 +90,10 @@ def train(
     params, segnn_state = segnn.init(key, init_graph)
 
     print(
-        f"Starting {args.epochs} epochs on {args.dataset} with {hk.data_structures.tree_size(params)} parameters."
+        f"Starting {args.epochs} epochs on {args.dataset} "
+        f"with {hk.data_structures.tree_size(params)} parameters."
+        "Jitting..."
     )
-    print("Jitting...")
 
     total_steps = args.epochs * len(loader_train)
 
