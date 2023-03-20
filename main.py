@@ -91,7 +91,7 @@ def train(
 
     print(
         f"Starting {args.epochs} epochs on {args.dataset} "
-        f"with {hk.data_structures.tree_size(params)} parameters."
+        f"with {hk.data_structures.tree_size(params)} parameters.\n"
         "Jitting..."
     )
 
