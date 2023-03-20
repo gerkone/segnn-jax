@@ -146,7 +146,7 @@ class SEGNNLayer(hk.Module):
         blocks: int = 2,
         norm: Optional[str] = None,
     ):
-        super().__init__(name=f"layer_{layer_num}")
+        super().__init__(f"layer_{layer_num}")
         assert norm in ["batch", "instance", "none", None], f"Unknown norm '{norm}'"
         self._output_irreps = output_irreps
         self._blocks = blocks
@@ -251,7 +251,7 @@ class SEGNN(hk.Module):
         hidden_irreps: Feature representation in the hidden layers
         output_irreps: Output representation.
         num_layers: Number of message passing layers
-        norm: Normalization type. Either be None, 'instance' or 'batch'
+        norm: Normalization type. Either None, 'instance' or 'batch'
         pool: Pooling mode (only for graph-wise tasks)
         task: Specifies where the output is located. Either 'graph' or 'node'
         blocks_per_layer: Number of tensor product blocks in each message passing
