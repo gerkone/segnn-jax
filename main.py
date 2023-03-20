@@ -76,7 +76,8 @@ def evaluate(
         graph, target = graph_transform(data)
         eval_start = time.perf_counter_ns()
         loss, _ = jax.lax.stop_gradient(loss_fn(params, segnn_state, graph, target))
-        eval_loss += loss
+        eval_loss += jax.block_until_ready(loss)
+
         eval_times += (time.perf_counter_ns() - eval_start) / 1e6
 
     return eval_times / len(loader), eval_loss / len(loader)
@@ -117,7 +118,7 @@ def train(
         # ignore padded target
         loss_fn = partial(mae, mask_last=True)
         eval_loss_fn = partial(
-            mse, mask_last=True, mean_shift=target_mean, mad_shift=target_mad
+            mae, mask_last=True, mean_shift=target_mean, mad_shift=target_mad
         )
     else:
         # nbody
@@ -175,7 +176,7 @@ def train(
             wandb_logs.update(
                 {"val_loss": float(val_loss), "eval_time": float(eval_time)}
             )
-            print(f" - val loss {val_loss:.6f}{tag}, eval {eval_time:.2f}ms", end="")
+            print(f" - val loss {val_loss:.6f}{tag}, infer {eval_time:.2f}ms", end="")
 
         print()
         if args.wandb:
@@ -190,8 +191,7 @@ def train(
         wandb.log({"test_loss": float(test_loss), "avg_eval_time": float(avg_time)})
     print(
         "Training done.\n"
-        f"Final test loss {test_loss:.6f} - "
-        f"checkpoint test loss {test_loss_ckp:.6f}.\n"
+        f"Final test loss {test_loss:.6f} - checkpoint test loss {test_loss_ckp:.6f}.\n"
         f"Average (model) eval time {avg_time:.2f}ms"
     )
 

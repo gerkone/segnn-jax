@@ -45,19 +45,27 @@ def QM9GraphTransform(
             n_edge=max_batch_edges + 1,
             n_graph=graph.n_node.shape[0] + 1,
         )
+
+        node_attributes = e3nn.IrrepsArray(
+            attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
+        )
+        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+
+        additional_message_features = e3nn.IrrepsArray(
+            edge_features_irreps,
+            jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
+        )
+        edge_attributes = e3nn.IrrepsArray(
+            attribute_irreps, jnp.pad(jnp.array(data.edge_attr), edge_attr_pad)
+        )
+
         st_graph = SteerableGraphsTuple(
             graph=graph,
-            node_attributes=e3nn.IrrepsArray(
-                attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
-            ),
-            edge_attributes=e3nn.IrrepsArray(
-                attribute_irreps, jnp.pad(jnp.array(data.edge_attr), edge_attr_pad)
-            ),
-            additional_message_features=e3nn.IrrepsArray(
-                edge_features_irreps,
-                jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
-            ),
+            node_attributes=node_attributes,
+            edge_attributes=edge_attributes,
+            additional_message_features=additional_message_features,
         )
+
         # pad targets
         target = jnp.append(jnp.array(data.y), 0)
         return st_graph, target
