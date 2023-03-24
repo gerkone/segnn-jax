@@ -26,14 +26,16 @@ def QM9GraphTransform(
     attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
 
     def _to_steerable_graph(data: Data) -> Tuple[SteerableGraphsTuple, jnp.array]:
+        ptr = jnp.array(data.ptr)
+        senders = jnp.array(data.edge_index[0])
+        receivers = jnp.array(data.edge_index[1])
         graph = jraph.GraphsTuple(
             nodes=e3nn.IrrepsArray(node_features_irreps, jnp.array(data.x)),
             edges=None,
-            senders=jnp.array(data.edge_index[0]),
-            receivers=jnp.array(data.edge_index[1]),
-            n_node=jnp.diff(jnp.array(data.ptr)),
-            # n_edge is not used anywhere by segnn, but is neded for padding
-            n_edge=jnp.array([jnp.array(data.edge_index[1]).shape[0]]),
+            senders=senders,
+            receivers=receivers,
+            n_node=jnp.diff(ptr),
+            n_edge=jnp.diff(jnp.sum(senders[:, jnp.newaxis] < ptr, axis=0)),
             globals=None,
         )
         # pad for jax static shapes
