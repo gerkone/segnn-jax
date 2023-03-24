@@ -130,13 +130,10 @@ def O3Decoder(
 
 
 class SEGNNLayer(hk.Module):
-    """Steerable E(3) equivariant layer.
+    """
+    Steerable E(3) equivariant layer.
 
-    Attributes:
-        output_irreps: Layer output representation
-        layer_num: Numbering of the layer
-        blocks: Number of tensor product blocks in the layer
-        norm: Normalization type. Either be None, 'instance' or 'batch'
+    Applies a message passing step (GN) with equivariant message and update functions.
     """
 
     def __init__(
@@ -145,12 +142,24 @@ class SEGNNLayer(hk.Module):
         layer_num: int,
         blocks: int = 2,
         norm: Optional[str] = None,
+        aggregate_fn: Optional[Callable] = jraph.segment_sum,
     ):
+        """
+        Initialize the layer.
+
+        Args:
+            output_irreps: Layer output representation
+            layer_num: Numbering of the layer
+            blocks: Number of tensor product blocks in the layer
+            norm: Normalization type. Either be None, 'instance' or 'batch'
+            aggregate_fn: Message aggregation function. Defaults to sum.
+        """
         super().__init__(f"layer_{layer_num}")
         assert norm in ["batch", "instance", "none", None], f"Unknown norm '{norm}'"
         self._output_irreps = output_irreps
         self._blocks = blocks
         self._norm = norm
+        self._aggregate_fn = aggregate_fn
 
     def _message(
         self,
@@ -161,6 +170,7 @@ class SEGNNLayer(hk.Module):
         outgoing: e3nn.IrrepsArray,
         globals_: Any,
     ) -> e3nn.IrrepsArray:
+        """Steerable equivariant message function."""
         _ = globals_
         _ = edge_features
         # create messages
@@ -188,6 +198,7 @@ class SEGNNLayer(hk.Module):
         msg: e3nn.IrrepsArray,
         globals_: Any,
     ) -> e3nn.IrrepsArray:
+        """Steerable equivariant update function."""
         _ = senders
         _ = globals_
         x = e3nn.concatenate((nodes, msg), axis=-1)
@@ -221,8 +232,6 @@ class SEGNNLayer(hk.Module):
 
         Args:
             st_graph: Input graph
-            irreps: Irreps in the hidden layer
-            layer_num: Numbering of the layer
 
         Returns:
             The updated graph
@@ -237,7 +246,7 @@ class SEGNNLayer(hk.Module):
                     st_graph.edge_attributes,
                     st_graph.additional_message_features,
                 ),
-                aggregate_edges_for_nodes_fn=jraph.segment_sum,
+                aggregate_edges_for_nodes_fn=self._aggregate_fn,
             )(st_graph.graph)
         )
 
@@ -246,16 +255,6 @@ class SEGNN(hk.Module):
     """Steerable E(3) equivariant network.
 
     Original paper https://arxiv.org/abs/2110.02905.
-
-    Attributes:
-        hidden_irreps: Feature representation in the hidden layers
-        output_irreps: Output representation.
-        num_layers: Number of message passing layers
-        norm: Normalization type. Either None, 'instance' or 'batch'
-        pool: Pooling mode (only for graph-wise tasks)
-        task: Specifies where the output is located. Either 'graph' or 'node'
-        blocks_per_layer: Number of tensor product blocks in each message passing
-        embed_msg_features: Set to true to also embed edges/message passing features
     """
 
     def __init__(
@@ -269,6 +268,19 @@ class SEGNN(hk.Module):
         blocks_per_layer: int = 2,
         embed_msg_features: bool = False,
     ):
+        """
+        Initialize the network.
+
+        Args:
+            hidden_irreps: Feature representation in the hidden layers
+            output_irreps: Output representation.
+            num_layers: Number of message passing layers
+            norm: Normalization type. Either None, 'instance' or 'batch'
+            pool: Pooling mode (only for graph-wise tasks)
+            task: Specifies where the output is located. Either 'graph' or 'node'
+            blocks_per_layer: Number of tensor product blocks in each message passing
+            embed_msg_features: Set to true to also embed edges/message passing features
+        """
         super().__init__()
 
         if isinstance(hidden_irreps, e3nn.Irreps):

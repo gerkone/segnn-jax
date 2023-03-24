@@ -28,16 +28,16 @@ def uniform_init(
 
 
 class O3TensorProduct(hk.Module):
-    """O(3) equivariant linear parametrized tensor product layer.
+    """
+    O(3) equivariant linear parametrized tensor product layer.
 
     Attributes:
+        left_irreps: Left input representation
+        right_irreps: Right input representation
         output_irreps: Output representation
-        biases: If set ot true will add biases
-        name: Name of the linear layer params
-        init_fn: Weight initialization function. Default is uniform.
-        gradient_normalization: Gradient normalization method. Default is "path"
-            NOTE: gradient_normalization="element" is the default in torch and haiku.
-        path_normalization: Path normalization method. Default is "element"
+        get_parameter: Haiku parameter getter and init function
+        tensor_product: Tensor product function
+        biases: Bias wrapper function
     """
 
     def __init__(
@@ -52,9 +52,23 @@ class O3TensorProduct(hk.Module):
         gradient_normalization: Optional[Union[str, float]] = None,
         path_normalization: Optional[Union[str, float]] = None,
     ):
+        """Initialize the tensor product.
+
+        Args:
+            output_irreps: Output representation
+            left_irreps: Left input representation
+            right_irreps: Right input representation (optional, defaults to 1x0e)
+            biases: If set ot true will add biases
+            name: Name of the linear layer params
+            init_fn: Weight initialization function. Default is uniform.
+            gradient_normalization: Gradient normalization method. Default is "path"
+                NOTE: gradient_normalization="element" is the default in torch and haiku.
+            path_normalization: Path normalization method. Default is "element"
+        """
         super().__init__(name)
 
         if not right_irreps:
+            # NOTE: this is equivalent to a linear recombination of the left vectors
             right_irreps = e3nn.Irreps("1x0e")
 
         if not isinstance(output_irreps, e3nn.Irreps):
@@ -72,7 +86,7 @@ class O3TensorProduct(hk.Module):
         if not init_fn:
             init_fn = uniform_init
 
-        self._get_parameter = init_fn
+        self.get_parameter = init_fn
 
         if not gradient_normalization:
             gradient_normalization = config("gradient_normalization")
@@ -90,7 +104,7 @@ class O3TensorProduct(hk.Module):
             path_normalization=path_normalization,
         )
         ws = [
-            self._get_parameter(
+            self.get_parameter(
                 name=(
                     f"w[{ins.i_in1},{ins.i_in2},{ins.i_out}] "
                     f"{tp.irreps_in1[ins.i_in1]},"
@@ -112,7 +126,7 @@ class O3TensorProduct(hk.Module):
         if biases and "0e" in self.output_irreps:
             # add biases
             b = [
-                self._get_parameter(
+                self.get_parameter(
                     f"b[{i_out}] {tp.irreps_out[i_out]}",
                     path_shape=(mul_ir.dim,),
                     weight_std=1 / jnp.sqrt(mul_ir.dim),
