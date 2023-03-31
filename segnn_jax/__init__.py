@@ -14,4 +14,4 @@ __all__ = [
     "SteerableGraphsTuple",
 ]
 
-__version__ = "0.3"
+__version__ = "0.5"
