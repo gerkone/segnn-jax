@@ -201,7 +201,7 @@ class SEGNNLayer(hk.Module):
         """Steerable equivariant update function."""
         _ = senders
         _ = globals_
-        x = e3nn.concatenate((nodes, msg), axis=-1)
+        x = e3nn.concatenate([nodes, msg], axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
         for i in range(self._blocks - 1):
             x = O3TensorProductGate(
