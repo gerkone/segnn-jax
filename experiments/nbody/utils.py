@@ -1,6 +1,7 @@
 from typing import Callable, List, Optional, Tuple
 
 import e3nn_jax as e3nn
+import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
 import numpy as np
@@ -24,13 +25,13 @@ def O3Transform(
     """
     attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
 
+    @jax.jit
     def _o3_transform(
         st_graph: SteerableGraphsTuple,
         loc: jnp.ndarray,
         vel: jnp.ndarray,
         charges: jnp.ndarray,
     ) -> SteerableGraphsTuple:
-
         graph = st_graph.graph
         prod_charges = charges[graph.senders] * charges[graph.receivers]
         rel_pos = loc[graph.senders] - loc[graph.receivers]
@@ -91,7 +92,7 @@ def NbodyGraphTransform(
     dataset_name: str,
     n_nodes: int,
     batch_size: int,
-    neighbours: Optional[int] = 0,
+    neighbours: Optional[int] = 6,
     relative_target: bool = False,
 ) -> Callable:
     """
@@ -100,7 +101,7 @@ def NbodyGraphTransform(
 
     if dataset_name == "charged":
         # charged system is a connected graph
-        full_edge_indices = np.array(
+        full_edge_indices = jnp.array(
             [
                 (i + n_nodes * b, j + n_nodes * b)
                 for b in range(batch_size)
@@ -111,7 +112,6 @@ def NbodyGraphTransform(
         ).T
 
     def _to_steerable_graph(data: List) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
-
         loc, vel, _, q, targets = data
 
         cur_batch = int(loc.shape[0] / n_nodes)
@@ -124,7 +124,7 @@ def NbodyGraphTransform(
             batch = batch.repeat_interleave(n_nodes).long()
             edge_indices = knn_graph(torch.from_numpy(np.array(loc)), neighbours, batch)
             # switched by default
-            senders, receivers = jnp.array(edge_indices[1]), jnp.array(edge_indices[0])
+            senders, receivers = jnp.array(edge_indices[0]), jnp.array(edge_indices[1])
 
         st_graph = SteerableGraphsTuple(
             graph=GraphsTuple(
@@ -215,8 +215,8 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
     loader_train = DataLoader(
         dataset_train,
         batch_size=args.batch_size,
-        shuffle=False,
-        drop_last=False,
+        shuffle=True,
+        drop_last=True,
         collate_fn=numpy_collate,
     )
     loader_val = DataLoader(

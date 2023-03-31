@@ -26,14 +26,16 @@ def QM9GraphTransform(
     attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
 
     def _to_steerable_graph(data: Data) -> Tuple[SteerableGraphsTuple, jnp.array]:
+        ptr = jnp.array(data.ptr)
+        senders = jnp.array(data.edge_index[0])
+        receivers = jnp.array(data.edge_index[1])
         graph = jraph.GraphsTuple(
             nodes=e3nn.IrrepsArray(node_features_irreps, jnp.array(data.x)),
             edges=None,
-            senders=jnp.array(data.edge_index[0]),
-            receivers=jnp.array(data.edge_index[1]),
-            n_node=jnp.diff(jnp.array(data.ptr)),
-            # n_edge is not used anywhere by segnn, but is neded for padding
-            n_edge=jnp.array([jnp.array(data.edge_index[1]).shape[0]]),
+            senders=senders,
+            receivers=receivers,
+            n_node=jnp.diff(ptr),
+            n_edge=jnp.diff(jnp.sum(senders[:, jnp.newaxis] < ptr, axis=0)),
             globals=None,
         )
         # pad for jax static shapes
@@ -45,19 +47,27 @@ def QM9GraphTransform(
             n_edge=max_batch_edges + 1,
             n_graph=graph.n_node.shape[0] + 1,
         )
+
+        node_attributes = e3nn.IrrepsArray(
+            attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
+        )
+        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+
+        additional_message_features = e3nn.IrrepsArray(
+            edge_features_irreps,
+            jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
+        )
+        edge_attributes = e3nn.IrrepsArray(
+            attribute_irreps, jnp.pad(jnp.array(data.edge_attr), edge_attr_pad)
+        )
+
         st_graph = SteerableGraphsTuple(
             graph=graph,
-            node_attributes=e3nn.IrrepsArray(
-                attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
-            ),
-            edge_attributes=e3nn.IrrepsArray(
-                attribute_irreps, jnp.pad(jnp.array(data.edge_attr), edge_attr_pad)
-            ),
-            additional_message_features=e3nn.IrrepsArray(
-                edge_features_irreps,
-                jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
-            ),
+            node_attributes=node_attributes,
+            edge_attributes=edge_attributes,
+            additional_message_features=additional_message_features,
         )
+
         # pad targets
         target = jnp.append(jnp.array(data.y), 0)
         return st_graph, target

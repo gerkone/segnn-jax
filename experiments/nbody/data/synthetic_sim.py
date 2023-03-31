@@ -42,10 +42,8 @@ class ChargedParticlesSim(object):
         return dist
 
     def _energy(self, loc, vel, edges):
-
         # disables division by zero warning, since I fix it with fill_diagonal
         with np.errstate(divide="ignore"):
-
             K = 0.5 * (vel**2).sum()
             U = 0
             for i in range(loc.shape[1]):

@@ -1,4 +1,4 @@
-from typing import Callable, NamedTuple, Optional, Tuple
+from typing import Callable, NamedTuple, Optional
 
 import e3nn_jax as e3nn
 import jax.numpy as jnp
@@ -12,9 +12,8 @@ class SteerableGraphsTuple(NamedTuple):
     graph: jraph.GraphsTuple
     node_attributes: Optional[e3nn.IrrepsArray] = None
     edge_attributes: Optional[e3nn.IrrepsArray] = None
-    # NOTE must put additional_message_features in a separate field otherwise
-    #  it would get updated by jraph.GraphNetwork (which goes against one of
-    #  the core ideas of the paper).
+    # NOTE: additional_message_features is in a separate field otherwise it would get
+    #  updated by jraph.GraphNetwork. Actual graph edges are used only for the messages.
     additional_message_features: Optional[e3nn.IrrepsArray] = None
 
 
