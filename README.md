@@ -1,6 +1,9 @@
 # Steerable E(3) GNN in jax
 Reimplementation of [SEGNN](https://arxiv.org/abs/2110.02905) in jax. Original work by Johannes Brandstetter, Rob Hesselink, Elise van der Pol, Erik Bekkers and Max Welling.
 
+## Why jax?
+**40-50% faster** inference and training compared to the [original torch implementation](https://github.com/RobDHess/Steerable-E3-GNN). Also JAX-MD.
+
 ## Installation
 ```
 python -m pip install segnn-jax
@@ -19,9 +22,12 @@ pip install --upgrade "jax[cuda]==0.4.1" -f https://storage.googleapis.com/jax-r
 
 ## Validation
 N-body (charged and gravity) and QM9 datasets are included for completeness from the original paper.
-The implementation is validated on all three of them, getting close results and considerably faster runtimes.
 
 ### Results
+Charged is on 5 bodies, gravity on 100 bodies. QM9 has graphs of variable sizes, so in jax samples are padded to the maximum size. Loss is MSE for Charged and Gravity and MAE for QM9.
+
+Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs, in (global) single precision.
+
 <table>
   <tr>
     <td></td>
@@ -30,36 +36,36 @@ The implementation is validated on all three of them, getting close results and 
   </tr>
   <tr>
     <td></td>
-    <td>MSE</td>
-    <td>Inference [ms]*</td>
-    <td>MSE</td>
+    <td>Loss</td>
+    <td>Inference [ms]</td>
+    <td>Loss</td>
     <td>Inference [ms]</td>
   </tr>
   <tr>
     <td> <code>charged (position)</code> </td>
     <td>.0043</td>
-    <td>40.76</td>
-    <td>.0047</td>
-    <td><b>28.67</td>
+    <td>21.22</td>
+    <td>.0045</td>
+    <td>4.47</td>
   </tr>
   <tr>
     <td><code>gravity (position)</code> </td>
     <td>.265</td>
-    <td>392.20</td>
-    <td>.28</td>
-    <td><b>240.34</td>
+    <td>60.55</td>
+    <td>.264</td>
+    <td>41.72</td>
   </tr>
   <tr>
     <td> <code>QM9 (alpha)</code> </td>
-    <td>.06</td>
-    <td>159.17</td>
-    <td></td>
-    <td>109.58**</td>
+    <td>.075*</td>
+    <td>82.53</td>
+    <td>.098</td>
+    <td>105.98**</td>
   </tr>
 </table>
-* remeasured (Quadro RTX 4000), batch of 100 graphs, single precision
+* rerun
 
-** padded
+** padded (naive)
 
 ### Validation install
 
@@ -90,12 +96,12 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
 ### Usage
 #### N-body (charged)
 ```
-python main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-4 --weight-decay=1e-8
+python main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12
 ```
 
 #### N-body (gravity)
 ```
-python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=1e-4 --weight-decay=1e-8 --neighbours=5 --n-bodies=100
+python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12 --neighbours=5 --n-bodies=100
 ```
 
 #### QM9
@@ -108,4 +114,4 @@ python main.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --lmax
 
 ## Acknowledgments
 - [e3nn_jax](https://github.com/e3nn/e3nn-jax) made this reimplementation possible.
-- [Artur Toshev](https://github.com/arturtoshev) and [Johannes Brandsetter](https://github.com/brandstetter-johannes), for supporting developement.
+- [Artur Toshev](https://github.com/arturtoshev) and [Johannes Brandsetter](https://github.com/brandstetter-johannes), for support.
