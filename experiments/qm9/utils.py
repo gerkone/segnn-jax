@@ -12,25 +12,26 @@ from .dataset import QM9
 
 
 def QM9GraphTransform(
-    node_features_irreps: e3nn.Irreps,
-    edge_features_irreps: e3nn.Irreps,
-    lmax_attributes: int,
+    args,
     max_batch_nodes: int,
     max_batch_edges: int,
+    train_trn: Callable,
 ) -> Callable:
     """
     Build a function that converts torch DataBatch into SteerableGraphsTuple.
 
     Mostly a quick fix out of lazyness. Rewriting QM9 in jax is not trivial.
     """
-    attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
+    attribute_irreps = e3nn.Irreps.spherical_harmonics(args.lmax_attributes)
 
-    def _to_steerable_graph(data: Data) -> Tuple[SteerableGraphsTuple, jnp.array]:
+    def _to_steerable_graph(
+        data: Data, training: bool = True
+    ) -> Tuple[SteerableGraphsTuple, jnp.array]:
         ptr = jnp.array(data.ptr)
         senders = jnp.array(data.edge_index[0])
         receivers = jnp.array(data.edge_index[1])
         graph = jraph.GraphsTuple(
-            nodes=e3nn.IrrepsArray(node_features_irreps, jnp.array(data.x)),
+            nodes=e3nn.IrrepsArray(args.node_irreps, jnp.array(data.x)),
             edges=None,
             senders=senders,
             receivers=receivers,
@@ -54,7 +55,7 @@ def QM9GraphTransform(
         node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
 
         additional_message_features = e3nn.IrrepsArray(
-            edge_features_irreps,
+            args.additional_message_irreps,
             jnp.pad(jnp.array(data.additional_message_features), edge_attr_pad),
         )
         edge_attributes = e3nn.IrrepsArray(
@@ -69,13 +70,24 @@ def QM9GraphTransform(
         )
 
         # pad targets
-        target = jnp.append(jnp.array(data.y), 0)
+        target = jnp.array(data.y)
+        if args.task == "node":
+            target = jnp.pad(target, [(0, max_batch_nodes - target.shape[0] - 1)])
+        if args.task == "graph":
+            target = jnp.append(target, 0)
+
+        # normalize targets
+        if training and train_trn is not None:
+            target = train_trn(target)
+
         return st_graph, target
 
     return _to_steerable_graph
 
 
-def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
+def setup_qm9_data(
+    args,
+) -> Tuple[DataLoader, DataLoader, DataLoader, Callable, Callable]:
     dataset_train = QM9(
         "datasets",
         args.target,
@@ -115,6 +127,10 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
         )
     )
 
+    target_mean, target_mad = dataset_train.calc_stats()
+
+    remove_offsets = lambda t: (t - target_mean) / target_mad
+
     # not great and very slow due to huge padding
     loader_train = DataLoader(
         dataset_train,
@@ -136,10 +152,12 @@ def setup_qm9_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
     )
 
     to_graphs_tuple = QM9GraphTransform(
-        args.node_irreps,
-        args.additional_message_irreps,
-        args.lmax_attributes,
+        args,
         max_batch_nodes=max_batch_nodes,
         max_batch_edges=max_batch_edges,
+        train_trn=remove_offsets,
     )
-    return loader_train, loader_val, loader_test, to_graphs_tuple
+
+    add_offsets = lambda p: p * target_mad + target_mean
+
+    return loader_train, loader_val, loader_test, to_graphs_tuple, add_offsets

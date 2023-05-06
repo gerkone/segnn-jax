@@ -4,6 +4,7 @@ import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
+import jraph
 import numpy as np
 import torch
 from jraph import GraphsTuple, segment_mean
@@ -111,7 +112,10 @@ def NbodyGraphTransform(
             ]
         ).T
 
-    def _to_steerable_graph(data: List) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
+    def _to_steerable_graph(
+        data: List, training: bool = True
+    ) -> Tuple[SteerableGraphsTuple, jnp.ndarray]:
+        _ = training
         loc, vel, _, q, targets = data
 
         cur_batch = int(loc.shape[0] / n_nodes)
@@ -138,6 +142,7 @@ def NbodyGraphTransform(
             )
         )
         st_graph = transform(st_graph, loc, vel, q)
+
         # relative shift as target
         if relative_target:
             targets = targets - loc
@@ -157,7 +162,9 @@ def numpy_collate(batch):
         return jnp.array(batch)
 
 
-def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable]:
+def setup_nbody_data(
+    args,
+) -> Tuple[DataLoader, DataLoader, DataLoader, Callable, Callable]:
     if args.dataset == "charged":
         dataset_train = ChargedDataset(
             partition="train",
@@ -234,4 +241,4 @@ def setup_nbody_data(args) -> Tuple[DataLoader, DataLoader, DataLoader, Callable
         collate_fn=numpy_collate,
     )
 
-    return loader_train, loader_val, loader_test, graph_transform
+    return loader_train, loader_val, loader_test, graph_transform, None

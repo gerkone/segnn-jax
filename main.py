@@ -1,214 +1,17 @@
 import argparse
 import time
 from functools import partial
-from typing import Callable, Iterable, Tuple
 
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import optax
 import wandb
 
-from experiments import setup_datasets
-from segnn_jax import SEGNN, SteerableGraphsTuple, weight_balanced_irreps
+from experiments import setup_data, train
+from segnn_jax import SEGNN, weight_balanced_irreps
 
 key = jax.random.PRNGKey(1337)
-
-
-def predict(
-    model_fn: hk.TransformedWithState,
-    params: hk.Params,
-    state: hk.State,
-    graph: SteerableGraphsTuple,
-    mean_shift: float = 0,
-    mad_shift: float = 1,
-) -> Tuple[jnp.ndarray, hk.State]:
-    pred, state = model_fn(params, state, graph)
-    return pred * mad_shift + mean_shift, state
-
-
-@partial(jax.jit, static_argnames=["model_fn", "mean_shift", "mad_shift", "mask_last"])
-def mae(
-    params: hk.Params,
-    state: hk.State,
-    graph: SteerableGraphsTuple,
-    target: jnp.ndarray,
-    model_fn: Callable,
-    mean_shift: float = 0,
-    mad_shift: float = 1,
-    mask_last: bool = False,
-) -> Tuple[float, hk.State]:
-    pred, state = predict(model_fn, params, state, graph, mean_shift, mad_shift)
-    assert target.shape == pred.shape
-    # similar to get_graph_padding_mask
-    if mask_last:
-        return (jnp.abs(pred[:-1] - target[:-1])).mean(), state
-    else:
-        return (jnp.abs(pred - target)).mean(), state
-
-
-@partial(jax.jit, static_argnames=["model_fn", "mean_shift", "mad_shift", "mask_last"])
-def mse(
-    params: hk.Params,
-    state: hk.State,
-    graph: SteerableGraphsTuple,
-    target: jnp.ndarray,
-    model_fn: Callable,
-    mean_shift: float = 0,
-    mad_shift: float = 1,
-    mask_last: bool = False,
-) -> Tuple[float, hk.State]:
-    pred, state = predict(model_fn, params, state, graph, mean_shift, mad_shift)
-    assert target.shape == pred.shape
-    if mask_last:
-        return (jnp.power(pred[:-1] - target[:-1], 2)).mean(), state
-    else:
-        return (jnp.power(pred - target, 2)).mean(), state
-
-
-@partial(jax.jit, static_argnames=["loss_fn", "opt_update"])
-def update(
-    params: hk.Params,
-    state: hk.State,
-    graph: SteerableGraphsTuple,
-    target: jnp.ndarray,
-    opt_state: optax.OptState,
-    loss_fn: Callable,
-    opt_update: Callable,
-) -> Tuple[float, hk.Params, hk.State, optax.OptState]:
-    (loss, state), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-        params, state, graph, target
-    )
-    updates, opt_state = opt_update(grads, opt_state, params)
-    return loss, optax.apply_updates(params, updates), state, opt_state
-
-
-def evaluate(
-    loader: Iterable,
-    params: hk.Params,
-    state: hk.State,
-    loss_fn: Callable,
-    graph_transform: Callable,
-) -> Tuple[float, float]:
-    eval_loss = 0.0
-    eval_times = 0.0
-    for data in loader:
-        graph, target = graph_transform(data)
-        eval_start = time.perf_counter_ns()
-        loss, _ = jax.lax.stop_gradient(loss_fn(params, state, graph, target))
-        eval_loss += jax.block_until_ready(loss)
-        eval_times += (time.perf_counter_ns() - eval_start) / 1e6
-
-    return eval_times / len(loader), eval_loss / len(loader)
-
-
-def train(
-    segnn: hk.Transformed, loader_train, loader_val, loader_test, graph_transform, args
-):
-    init_graph, _ = graph_transform(next(iter(loader_train)))
-    params, segnn_state = segnn.init(key, init_graph)
-
-    print(
-        f"Starting {args.epochs} epochs on {args.dataset} "
-        f"with {hk.data_structures.tree_size(params)} parameters.\n"
-        "Jitting..."
-    )
-
-    total_steps = args.epochs * len(loader_train)
-
-    # set up learning rate and optimizer
-    if args.lr_scheduling:
-        learning_rate = optax.piecewise_constant_schedule(
-            args.lr,
-            boundaries_and_scales={
-                int(total_steps * 0.8): 0.1,
-                int(total_steps * 0.9): 0.1,
-            },
-        )
-    else:
-        learning_rate = args.lr
-
-    opt_init, opt_update = optax.adamw(
-        learning_rate=learning_rate, weight_decay=args.weight_decay
-    )
-
-    if args.dataset == "qm9":
-        # qm9
-        target_mean, target_mad = loader_train.dataset.calc_stats()
-        # ignore padded target
-        loss_fn = partial(mae, model_fn=segnn.apply, mask_last=True)
-        eval_loss_fn = partial(
-            mae,
-            model_fn=segnn.apply,
-            mask_last=True,
-            mean_shift=target_mean,
-            mad_shift=target_mad,
-        )
-    else:
-        # nbody
-        target_mean, target_mad = 0, 1
-        loss_fn = partial(mse, model_fn=segnn.apply)
-        eval_loss_fn = partial(mse, model_fn=segnn.apply)
-
-    update_fn = partial(update, loss_fn=loss_fn, opt_update=opt_update)
-    eval_fn = partial(evaluate, loss_fn=eval_loss_fn, graph_transform=graph_transform)
-
-    opt_state = opt_init(params)
-    avg_time = []
-    best_val = 1e10
-
-    for e in range(args.epochs):
-        train_loss = 0.0
-        train_start = time.perf_counter_ns()
-        for data in loader_train:
-            graph, target = graph_transform(data)
-            # normalize targets
-            loss, params, segnn_state, opt_state = update_fn(
-                params=params,
-                state=segnn_state,
-                graph=graph,
-                target=(target - target_mean) / target_mad,
-                opt_state=opt_state,
-            )
-            train_loss += loss
-        train_time = (time.perf_counter_ns() - train_start) / 1e6
-        train_loss /= len(loader_train)
-        wandb_logs = {"train_loss": float(train_loss), "update_time": float(train_time)}
-        print(
-            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {train_time:.2f}ms",
-            end="",
-        )
-        if e % args.val_freq == 0:
-            eval_time, val_loss = eval_fn(loader_val, params, segnn_state)
-            avg_time.append(eval_time)
-            tag = ""
-            if val_loss < best_val:
-                best_val = val_loss
-                _, test_loss_ckp = eval_fn(loader_test, params, segnn_state)
-                wandb_logs.update({"test_loss": float(test_loss_ckp)})
-                tag = " (BEST)"
-            wandb_logs.update(
-                {"val_loss": float(val_loss), "eval_time": float(eval_time)}
-            )
-            print(f" - val loss {val_loss:.6f}{tag}, infer {eval_time:.2f}ms", end="")
-
-        print()
-        if args.wandb:
-            wandb.log(wandb_logs)
-
-    test_loss = 0
-    _, test_loss = eval_fn(loader_test, params, segnn_state)
-    # ignore compilation time
-    avg_time = avg_time[2:]
-    avg_time = sum(avg_time) / len(avg_time)
-    if args.wandb:
-        wandb.log({"test_loss": float(test_loss), "avg_eval_time": float(avg_time)})
-    print(
-        "Training done.\n"
-        f"Final test loss {test_loss:.6f} - checkpoint test loss {test_loss_ckp:.6f}.\n"
-        f"Average (model) eval time {avg_time:.2f}ms"
-    )
 
 
 if __name__ == "__main__":
@@ -369,7 +172,7 @@ if __name__ == "__main__":
 
     # feature representations
     if args.dataset == "qm9":
-        task = "graph"
+        args.task = "graph"
         if args.feature_type == "one_hot":
             args.node_irreps = e3nn.Irreps("5x0e")
         elif args.feature_type == "cormorant":
@@ -379,7 +182,7 @@ if __name__ == "__main__":
         args.output_irreps = e3nn.Irreps("1x0e")
         args.additional_message_irreps = e3nn.Irreps("1x0e")
     elif args.dataset in ["charged", "gravity"]:
-        task = "node"
+        args.task = "node"
         args.node_irreps = e3nn.Irreps("2x1o + 1x0e")
         args.output_irreps = e3nn.Irreps("1x1o")
         args.additional_message_irreps = e3nn.Irreps("2x0e")
@@ -398,13 +201,38 @@ if __name__ == "__main__":
         hidden_irreps=hidden_irreps,
         output_irreps=args.output_irreps,
         num_layers=args.layers,
-        task=task,
+        task=args.task,
         pool="avg",
         blocks_per_layer=args.blocks,
         norm=args.norm,
     )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
-    dataset_train, dataset_val, dataset_test, graph_transform = setup_datasets(args)
+    loader_train, loader_val, loader_test, graph_transform, eval_trn = setup_data(args)
 
-    train(segnn, dataset_train, dataset_val, dataset_test, graph_transform, args)
+    if args.dataset == "qm9":
+        from experiments.train import loss_fn
+
+        _mae = lambda p, t: jnp.abs(p - t)
+
+        train_loss = partial(loss_fn, criterion=_mae, task=args.task)
+        eval_loss = partial(loss_fn, criterion=_mae, eval_trn=eval_trn, task=args.task)
+    if args.dataset in ["charged", "gravity"]:
+        from experiments.train import loss_fn
+
+        _mse = lambda p, t: jnp.power(p - t, 2)
+
+        train_loss = partial(loss_fn, criterion=_mse, do_mask=False)
+        eval_loss = partial(loss_fn, criterion=_mse, do_mask=False)
+
+    train(
+        key,
+        segnn,
+        loader_train,
+        loader_val,
+        loader_test,
+        train_loss,
+        eval_loss,
+        graph_transform,
+        args,
+    )
