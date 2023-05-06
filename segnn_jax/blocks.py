@@ -31,21 +31,15 @@ class O3TensorProduct(hk.Module):
     """
     O(3) equivariant linear parametrized tensor product layer.
 
-    Attributes:
-        left_irreps: Left input representation
-        right_irreps: Right input representation
-        output_irreps: Output representation
-        get_parameter: Haiku parameter getter and init function
-        tensor_product: Tensor product function
-        biases: Bias wrapper function
+    Functionally the same as O3TensorProductLegacy, but around 5-10% faster.
+    FullyConnectedTensorProduct seems faster than tensor_product + linear:
+    https://github.com/e3nn/e3nn-jax/releases/tag/0.14.0
     """
 
     def __init__(
         self,
         output_irreps: e3nn.Irreps,
         *,
-        left_irreps: e3nn.Irreps,
-        right_irreps: Optional[e3nn.Irreps] = None,
         biases: bool = True,
         name: Optional[str] = None,
         init_fn: Optional[InitFn] = None,
@@ -56,8 +50,6 @@ class O3TensorProduct(hk.Module):
 
         Args:
             output_irreps: Output representation
-            left_irreps: Left input representation
-            right_irreps: Right input representation (optional, defaults to 1x0e)
             biases: If set ot true will add biases
             name: Name of the linear layer params
             init_fn: Weight initialization function. Default is uniform.
@@ -67,41 +59,34 @@ class O3TensorProduct(hk.Module):
         """
         super().__init__(name)
 
-        if not right_irreps:
-            # NOTE: this is equivalent to a linear recombination of the left vectors
-            right_irreps = e3nn.Irreps("1x0e")
-
         if not isinstance(output_irreps, e3nn.Irreps):
             output_irreps = e3nn.Irreps(output_irreps)
-        if not isinstance(left_irreps, e3nn.Irreps):
-            left_irreps = e3nn.Irreps(left_irreps)
-        if not isinstance(right_irreps, e3nn.Irreps):
-            right_irreps = e3nn.Irreps(right_irreps)
-
         self.output_irreps = output_irreps
 
-        self.right_irreps = right_irreps
-        self.left_irreps = left_irreps
-
+        # tp weight init
         if not init_fn:
             init_fn = uniform_init
-
         self.get_parameter = init_fn
 
         if not gradient_normalization:
             gradient_normalization = config("gradient_normalization")
         if not path_normalization:
             path_normalization = config("path_normalization")
+        self._gradient_normalization = gradient_normalization
+        self._path_normalization = path_normalization
 
-        # NOTE FunctionalFullyConnectedTensorProduct appears to be faster than combining
-        #  tensor_product+linear: https://github.com/e3nn/e3nn-jax/releases/tag/0.14.0
-        #  Implementation adapted from e3nn.haiku.FullyConnectedTensorProduct
+        self.biases = biases and "0e" in self.output_irreps
+
+    def _build_tensor_product(
+        self, left_irreps: e3nn.Irreps, right_irreps: e3nn.Irreps
+    ) -> Callable:
+        """Build the tensor product function."""
         tp = e3nn.FunctionalFullyConnectedTensorProduct(
             left_irreps,
             right_irreps,
-            output_irreps,
-            gradient_normalization=gradient_normalization,
-            path_normalization=path_normalization,
+            self.output_irreps,
+            gradient_normalization=self._gradient_normalization,
+            path_normalization=self._path_normalization,
         )
         ws = [
             self.get_parameter(
@@ -118,35 +103,32 @@ class O3TensorProduct(hk.Module):
         ]
 
         def tensor_product(x, y, **kwargs):
-            return tp.left_right(ws, x, y, **kwargs)._convert(output_irreps)
+            return tp.left_right(ws, x, y, **kwargs)._convert(self.output_irreps)
 
-        self.tensor_product = naive_broadcast_decorator(tensor_product)
-        self.biases = None
+        return naive_broadcast_decorator(tensor_product)
 
-        if biases and "0e" in self.output_irreps:
-            # add biases
-            b = [
-                self.get_parameter(
-                    f"b[{i_out}] {tp.irreps_out[i_out]}",
-                    path_shape=(mul_ir.dim,),
-                    weight_std=1 / jnp.sqrt(mul_ir.dim),
-                )
-                for i_out, mul_ir in enumerate(output_irreps)
-                if mul_ir.ir.is_scalar()
-            ]
-            b = e3nn.IrrepsArray(
-                f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b)
+    def _build_biases(self) -> Callable:
+        """Build the add bias function."""
+        b = [
+            self.get_parameter(
+                f"b[{i_out}] {self.output_irreps}",
+                path_shape=(mul_ir.dim,),
+                weight_std=1 / jnp.sqrt(mul_ir.dim),
+            )
+            for i_out, mul_ir in enumerate(self.output_irreps)
+            if mul_ir.ir.is_scalar()
+        ]
+        b = e3nn.IrrepsArray(f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b))
+
+        # TODO: could be improved
+        def _wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+            scalars = x.filter("0e")
+            other = x.filter(drop="0e")
+            return e3nn.concatenate(
+                [scalars + b.broadcast_to(scalars.shape), other], axis=1
             )
 
-            # TODO: could be improved
-            def _wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
-                scalars = x.filter("0e")
-                other = x.filter(drop="0e")
-                return e3nn.concatenate(
-                    [scalars + b.broadcast_to(scalars.shape), other], axis=1
-                )
-
-            self.biases = _wrapper
+        return _wrapper
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
@@ -162,7 +144,7 @@ class O3TensorProduct(hk.Module):
         """
 
         if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
+            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
             warnings.warn(
@@ -171,18 +153,13 @@ class O3TensorProduct(hk.Module):
                 "redistributing them into scalars or choose higher orders."
             )
 
-        assert (
-            x.irreps == self.left_irreps
-        ), f"Left irreps do not match. Got {x.irreps}, expected {self.left_irreps}"
-        assert (
-            y.irreps == self.right_irreps
-        ), f"Right irreps do not match. Got {y.irreps}, expected {self.right_irreps}"
-
-        output = self.tensor_product(x, y, **kwargs)
+        tp = self._build_tensor_product(x.irreps, y.irreps)
+        output = tp(x, y, **kwargs)
 
         if self.biases:
             # add biases
-            return self.biases(output)
+            bias_fn = self._build_biases()
+            return bias_fn(output)
 
         return output
 
@@ -190,8 +167,6 @@ class O3TensorProduct(hk.Module):
 def O3TensorProductLegacy(
     output_irreps: e3nn.Irreps,
     *,
-    left_irreps: e3nn.Irreps,
-    right_irreps: Optional[e3nn.Irreps] = None,
     biases: bool = True,
     name: Optional[str] = None,
     init_fn: Optional[InitFn] = None,
@@ -215,15 +190,8 @@ def O3TensorProductLegacy(
         A function that returns the output to the weighted tensor product.
     """
 
-    if not right_irreps:
-        right_irreps = e3nn.Irreps("1x0e")
-
     if not isinstance(output_irreps, e3nn.Irreps):
         output_irreps = e3nn.Irreps(output_irreps)
-    if not isinstance(left_irreps, e3nn.Irreps):
-        left_irreps = e3nn.Irreps(left_irreps)
-    if not isinstance(right_irreps, e3nn.Irreps):
-        right_irreps = e3nn.Irreps(right_irreps)
 
     if not init_fn:
         init_fn = uniform_init
@@ -251,7 +219,7 @@ def O3TensorProductLegacy(
         """
 
         if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1)))
+            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
             warnings.warn(
@@ -259,13 +227,6 @@ def O3TensorProductLegacy(
                 "but both operands are. This can have undesired behaviour (NaN). Try "
                 "redistributing them into scalars or choose higher orders."
             )
-
-        assert (
-            x.irreps == left_irreps
-        ), f"Left irreps do not match. Got {x.irreps}, expected {left_irreps}"
-        assert (
-            y.irreps == right_irreps
-        ), f"Right irreps do not match. Got {y.irreps}, expected {right_irreps}"
 
         tp = e3nn.tensor_product(x, y)
 
@@ -280,8 +241,6 @@ O3Layer = O3TensorProduct if config("o3_layer") == "new" else O3TensorProductLeg
 def O3TensorProductGate(
     output_irreps: e3nn.Irreps,
     *,
-    left_irreps: e3nn.Irreps,
-    right_irreps: Optional[e3nn.Irreps] = None,
     biases: bool = True,
     scalar_activation: Optional[Callable] = None,
     gate_activation: Optional[Callable] = None,
@@ -312,8 +271,6 @@ def O3TensorProductGate(
     )
     tensor_product = O3Layer(
         (gate_irreps + output_irreps).regroup(),
-        left_irreps=left_irreps,
-        right_irreps=right_irreps,
         biases=biases,
         name=name,
         init_fn=init_fn,

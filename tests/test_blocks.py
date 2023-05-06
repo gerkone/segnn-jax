@@ -9,7 +9,7 @@ from segnn_jax import O3TensorProduct, O3TensorProductGate, O3TensorProductLegac
 @pytest.mark.parametrize("biases", [False, True])
 def test_linear(key, biases):
     f = lambda x1, x2: O3TensorProduct(
-        "1x1o", left_irreps="1x1o", right_irreps="1x1o", biases=biases
+        "1x1o", biases=biases
     )(x1, x2)
     f = hk.without_apply_rng(hk.transform(f))
 
@@ -32,7 +32,7 @@ def test_gated(key, biases):
     segnn_jax.blocks.O3Layer = segnn_jax.blocks.O3TensorProduct
 
     f = lambda x1, x2: O3TensorProductGate(
-        "1x1o", left_irreps="1x1o", right_irreps="1x1o", biases=biases
+        "1x1o", biases=biases
     )(x1, x2)
     f = hk.without_apply_rng(hk.transform(f))
 
@@ -51,7 +51,7 @@ def test_gated(key, biases):
 @pytest.mark.parametrize("biases", [False, True])
 def test_linear_legacy(key, biases):
     f = lambda x1, x2: O3TensorProductLegacy(
-        "1x1o", left_irreps="1x1o", right_irreps="1x1o", biases=biases
+        "1x1o", biases=biases
     )(x1, x2)
     f = hk.without_apply_rng(hk.transform(f))
 
