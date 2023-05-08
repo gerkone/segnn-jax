@@ -26,12 +26,9 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
     def _embedding(
         st_graph: SteerableGraphsTuple,
     ) -> SteerableGraphsTuple:
-        # TODO update
         graph = st_graph.graph
         nodes = O3Layer(
             embed_irreps,
-            left_irreps=graph.nodes.irreps,
-            right_irreps=st_graph.node_attributes.irreps,
             name="embedding_nodes",
         )(graph.nodes, st_graph.node_attributes)
         st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
@@ -40,8 +37,6 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
         if embed_edges:
             additional_message_features = O3Layer(
                 embed_irreps,
-                left_irreps=graph.nodes.irreps,
-                right_irreps=st_graph.node_attributes.irreps,
                 name="embedding_msg_features",
             )(
                 st_graph.additional_message_features,
@@ -82,30 +77,21 @@ def O3Decoder(
         nodes = st_graph.graph.nodes
         # pre pool block
         for i in range(blocks):
-            nodes = O3TensorProductGate(
-                latent_irreps,
-                left_irreps=nodes.irreps,
-                right_irreps=st_graph.node_attributes.irreps,
-                name=f"prepool_{i}",
-            )(nodes, st_graph.node_attributes)
+            nodes = O3TensorProductGate(latent_irreps, name=f"prepool_{i}")(
+                nodes, st_graph.node_attributes
+            )
 
         if task == "node":
-            nodes = O3Layer(
-                output_irreps,
-                left_irreps=nodes.irreps,
-                right_irreps=st_graph.node_attributes.irreps,
-                name="output",
-            )(nodes, st_graph.node_attributes)
+            nodes = O3Layer(output_irreps, name="output")(
+                nodes, st_graph.node_attributes
+            )
 
         if task == "graph":
             # pool over graph
             pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
-            nodes = O3Layer(
-                pooled_irreps,
-                left_irreps=nodes.irreps,
-                right_irreps=st_graph.node_attributes.irreps,
-                name=f"prepool_{blocks}",
-            )(nodes, st_graph.node_attributes)
+            nodes = O3Layer(pooled_irreps, name=f"prepool_{blocks}")(
+                nodes, st_graph.node_attributes
+            )
 
             # pooling layer
             if pool == "avg":
@@ -117,12 +103,8 @@ def O3Decoder(
 
             # post pool mlp (not steerable)
             for i in range(blocks):
-                nodes = O3TensorProductGate(
-                    pooled_irreps, left_irreps=nodes.irreps, name=f"postpool_{i}"
-                )(nodes)
-            nodes = O3Layer(output_irreps, left_irreps=nodes.irreps, name="output")(
-                nodes
-            )
+                nodes = O3TensorProductGate(pooled_irreps, name=f"postpool_{i}")(nodes)
+            nodes = O3Layer(output_irreps, name="output")(nodes)
 
         return nodes
 
@@ -179,12 +161,9 @@ class SEGNNLayer(hk.Module):
             msg = e3nn.concatenate([msg, additional_message_features], axis=-1)
         # message mlp (phi_m in the paper) steered by edge attributeibutes
         for i in range(self._blocks):
-            msg = O3TensorProductGate(
-                self._output_irreps,
-                left_irreps=msg.irreps,
-                right_irreps=getattr(edge_attribute, "irreps", None),
-                name=f"tp_{i}",
-            )(msg, edge_attribute)
+            msg = O3TensorProductGate(self._output_irreps, name=f"tp_{i}")(
+                msg, edge_attribute
+            )
         # NOTE: original implementation only applied batch norm to messages
         if self._norm == "batch":
             msg = e3nn.haiku.BatchNorm(irreps=self._output_irreps)(msg)
@@ -204,19 +183,13 @@ class SEGNNLayer(hk.Module):
         x = e3nn.concatenate([nodes, msg], axis=-1)
         # update mlp (phi_f in the paper) steered by node attributeibutes
         for i in range(self._blocks - 1):
-            x = O3TensorProductGate(
-                self._output_irreps,
-                left_irreps=x.irreps,
-                right_irreps=getattr(node_attribute, "irreps", None),
-                name=f"tp_{i}",
-            )(x, node_attribute)
+            x = O3TensorProductGate(self._output_irreps, name=f"tp_{i}")(
+                x, node_attribute
+            )
         # last update layer without activation
-        update = O3Layer(
-            self._output_irreps,
-            left_irreps=x.irreps,
-            right_irreps=getattr(node_attribute, "irreps", None),
-            name=f"tp_{self._blocks - 1}",
-        )(x, node_attribute)
+        update = O3Layer(self._output_irreps, name=f"tp_{self._blocks - 1}")(
+            x, node_attribute
+        )
         # residual connection
         nodes += update
         # message norm
