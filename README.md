@@ -17,7 +17,7 @@ python -m pip install -e .
 ### GPU support
 Upgrade `jax` to the gpu version
 ```
-pip install --upgrade "jax[cuda]==0.4.1" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --upgrade "jax[cuda]==0.4.8" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 ## Validation
@@ -57,13 +57,13 @@ Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs
   </tr>
   <tr>
     <td> <code>QM9 (alpha)</code> </td>
-    <td>.075*</td>
+    <td>.066*</td>
     <td>82.53</td>
-    <td>.098</td>
+    <td>.082</td>
     <td>105.98**</td>
   </tr>
 </table>
-* rerun
+* rerun on same conditions
 
 ** padded (naive)
 
@@ -76,7 +76,6 @@ git clone https://github.com/gerkone/segnn-jax
 
 They are adapted from the original implementation, so additionally `torch` and `torch_geometric` are needed (cpu versions are enough).
 ```
-pip3 install torch==1.12.1 --extra-index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r experiments/requirements.txt
 ```
 
@@ -96,17 +95,17 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100
 ### Usage
 #### N-body (charged)
 ```
-python main.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12
+python validate.py --dataset=charged --epochs=200 --max-samples=3000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12
 ```
 
 #### N-body (gravity)
 ```
-python main.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12 --neighbours=5 --n-bodies=100
+python validate.py --dataset=gravity --epochs=100 --target=pos --max-samples=10000 --lmax-hidden=1 --lmax-attributes=1 --layers=4 --units=64 --norm=none --batch-size=100 --lr=5e-3 --weight-decay=1e-12 --neighbours=5 --n-bodies=100
 ```
 
 #### QM9
 ```
-python main.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8 --lr-scheduling
+python validate.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --lmax-attributes=3 --layers=7 --units=128 --norm=instance --batch-size=128 --lr=5e-4 --weight-decay=1e-8 --lr-scheduling
 ```
 
 (configurations used in validation)

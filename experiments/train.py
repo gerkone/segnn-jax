@@ -99,13 +99,15 @@ def train(
     total_steps = args.epochs * len(loader_train)
 
     # set up learning rate and optimizer
-    learning_rate = optax.piecewise_constant_schedule(
-        args.lr,
-        boundaries_and_scales={
-            int(total_steps * 0.6): 0.1,
-            int(total_steps * 0.9): 0.1,
-        },
-    )
+    learning_rate = args.lr
+    if args.lr_scheduling:
+        learning_rate = optax.piecewise_constant_schedule(
+            learning_rate,
+            boundaries_and_scales={
+                int(total_steps * 0.7): 0.1,
+                int(total_steps * 0.9): 0.1,
+            },
+        )
     opt_init, opt_update = optax.adamw(
         learning_rate=learning_rate, weight_decay=args.weight_decay
     )
