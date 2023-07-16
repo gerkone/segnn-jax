@@ -96,8 +96,7 @@ def O3Decoder(
 
         if task == "graph":
             # pool over graph
-            pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
-            nodes = O3Layer(pooled_irreps, name=f"prepool_{blocks}")(
+            nodes = O3Layer(latent_irreps, name=f"prepool_{blocks}")(
                 nodes, st_graph.node_attributes
             )
 
@@ -111,8 +110,10 @@ def O3Decoder(
 
             # post pool mlp (not steerable)
             for i in range(blocks):
-                nodes = O3TensorProductGate(pooled_irreps, name=f"postpool_{i}")(nodes)
-            nodes = O3Layer(output_irreps, name="output")(nodes)
+                nodes = O3TensorProductGate(
+                    latent_irreps, name=f"postpool_{i}", o3_layer=O3TensorProduct
+                )(nodes)
+            nodes = O3TensorProduct(output_irreps, name="output")(nodes)
 
         return nodes
 

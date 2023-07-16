@@ -272,6 +272,13 @@ class O3TensorProductSCN(TensorProduct):
             path_normalization=self._path_normalization,
         )
 
+    def _check_input(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
+    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        if not y:
+            raise ValueError("eSCN cannot be used without the right input.")
+        return super()._check_input(x, y)
+
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
     ) -> e3nn.IrrepsArray:
@@ -338,6 +345,7 @@ def O3TensorProductGate(
         name=name,
         init_fn=init_fn,
     )
+
     if not scalar_activation:
         scalar_activation = jax.nn.silu
     if not gate_activation:

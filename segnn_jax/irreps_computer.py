@@ -33,6 +33,12 @@ def weight_balanced_irreps(
     Determines irreps_left such that the parametrized tensor product
         Linear(tensor_product(irreps_left, irreps_right))
     has (at least) scalar_units weights.
+
+    Args:
+        scalar_units: number of desired weights
+        irreps_right: irreps of the right tensor
+        use_sh: whether to use spherical harmonics
+        lmax: maximum level of spherical harmonics
     """
     # irrep order
     if lmax is None:
