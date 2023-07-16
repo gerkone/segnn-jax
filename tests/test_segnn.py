@@ -1,25 +1,24 @@
 import e3nn_jax as e3nn
 import haiku as hk
 import pytest
-from e3nn_jax.util import assert_equivariant
+from e3nn_jax.utils import assert_equivariant
 
-from segnn_jax import SEGNN, weight_balanced_irreps
+from segnn_jax import SEGNN, O3TensorProduct, O3TensorProductFC, weight_balanced_irreps
 
 
 @pytest.mark.parametrize("task", ["graph", "node"])
 @pytest.mark.parametrize("norm", ["none", "instance"])
 def test_equivariance(key, dummy_graph, norm, task):
-    import segnn_jax.blocks
+    def segnn(x):
+        return SEGNN(
+            hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
+            output_irreps=e3nn.Irreps("1x1o"),
+            num_layers=1,
+            task=task,
+            norm=norm,
+            o3_layer=O3TensorProduct,
+        )(x)
 
-    segnn_jax.blocks.O3Layer = segnn_jax.blocks.O3TensorProduct
-
-    segnn = lambda x: SEGNN(
-        hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
-        output_irreps=e3nn.Irreps("1x1o"),
-        num_layers=1,
-        task=task,
-        norm=norm,
-    )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
     graph = dummy_graph()
@@ -38,18 +37,17 @@ def test_equivariance(key, dummy_graph, norm, task):
 
 @pytest.mark.parametrize("task", ["graph", "node"])
 @pytest.mark.parametrize("norm", ["none", "instance"])
-def test_equivariance_legacy(key, dummy_graph, norm, task):
-    import segnn_jax.blocks
+def test_equivariance_fully_connected(key, dummy_graph, norm, task):
+    def segnn(x):
+        return SEGNN(
+            hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
+            output_irreps=e3nn.Irreps("1x1o"),
+            num_layers=1,
+            task=task,
+            norm=norm,
+            o3_layer=O3TensorProductFC,
+        )(x)
 
-    segnn_jax.blocks.O3Layer = segnn_jax.blocks.O3TensorProductLegacy
-
-    segnn = lambda x: SEGNN(
-        hidden_irreps=weight_balanced_irreps(8, e3nn.Irreps.spherical_harmonics(1)),
-        output_irreps=e3nn.Irreps("1x1o"),
-        num_layers=1,
-        task=task,
-        norm=norm,
-    )(x)
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
     graph = dummy_graph()
