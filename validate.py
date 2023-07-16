@@ -227,21 +227,23 @@ if __name__ == "__main__":
     loader_train, loader_val, loader_test, graph_transform, eval_trn = setup_data(args)
 
     if args.dataset == "qm9":
-        from experiments.train import loss_fn
+        from experiments.train import loss_fn_wrapper
 
         def _mae(p, t):
             return jnp.abs(p - t)
 
-        train_loss = partial(loss_fn, criterion=_mae, task=args.task)
-        eval_loss = partial(loss_fn, criterion=_mae, eval_trn=eval_trn, task=args.task)
+        train_loss = partial(loss_fn_wrapper, criterion=_mae, task=args.task)
+        eval_loss = partial(
+            loss_fn_wrapper, criterion=_mae, eval_trn=eval_trn, task=args.task
+        )
     if args.dataset in ["charged", "gravity"]:
-        from experiments.train import loss_fn
+        from experiments.train import loss_fn_wrapper
 
         def _mse(p, t):
             return jnp.power(p - t, 2)
 
-        train_loss = partial(loss_fn, criterion=_mse, do_mask=False)
-        eval_loss = partial(loss_fn, criterion=_mse, do_mask=False)
+        train_loss = partial(loss_fn_wrapper, criterion=_mse, do_mask=False)
+        eval_loss = partial(loss_fn_wrapper, criterion=_mse, do_mask=False)
 
     train(
         key,

@@ -46,7 +46,7 @@ Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs
     <td>.0043</td>
     <td>21.22</td>
     <td>.0045</td>
-    <td>3.85</td>
+    <td>3.77</td>
   </tr>
   <tr>
     <td><code>gravity (position)</code> </td>
@@ -93,7 +93,7 @@ python3 -u generate_dataset.py --simulation=gravity --n-balls=100 --seed=43
 ```
 
 ### Notes
-On `jax<=0.4.6`, the `jit`-`pjit` merge can be deactivated making traning faster. This looks like an issue with dataloading and the validation training loop implementation and it does not affect SEGNN.
+On `jax<=0.4.6`, the `jit`-`pjit` merge can be deactivated making traning faster (on nbody). This looks like an issue with dataloading and the validation training loop implementation and it does not affect SEGNN.
 ```
 export JAX_JIT_PJIT_API_MERGE=0
 ```

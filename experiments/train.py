@@ -13,7 +13,7 @@ from segnn_jax import SteerableGraphsTuple
 
 
 @partial(jit, static_argnames=["model_fn", "criterion", "task", "do_mask", "eval_trn"])
-def loss_fn(
+def loss_fn_wrapper(
     params: hk.Params,
     state: hk.State,
     st_graph: SteerableGraphsTuple,
@@ -27,16 +27,21 @@ def loss_fn(
     pred, state = model_fn(params, state, st_graph)
     if eval_trn is not None:
         pred = eval_trn(pred)
-    if task == "node":
-        mask = jraph.get_node_padding_mask(st_graph.graph)
-    if task == "graph":
-        mask = jraph.get_graph_padding_mask(st_graph.graph)
-    # broadcase mask for vector targets
-    if len(pred.shape) == 2:
-        mask = mask[:, jnp.newaxis]
+
     if do_mask:
-        target = target * mask
-        pred = pred * mask
+        if task == "node":
+            mask = jraph.get_node_padding_mask(st_graph.graph)
+        if task == "graph":
+            mask = jraph.get_graph_padding_mask(st_graph.graph)
+        # broadcast mask for vector targets
+        if len(pred.shape) == 2:
+            mask = mask[:, jnp.newaxis]
+    else:
+        mask = jnp.ones_like(target)
+
+    target = target * mask
+    pred = pred * mask
+
     assert target.shape == pred.shape
     return jnp.sum(criterion(pred, target)) / jnp.count_nonzero(mask), state
 
