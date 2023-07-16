@@ -17,7 +17,7 @@ python -m pip install -e .
 ### GPU support
 Upgrade `jax` to the gpu version
 ```
-pip install --upgrade "jax[cuda]==0.4.13" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --upgrade "jax[cuda]>=0.4.6" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 ## Validation
@@ -92,6 +92,12 @@ python3 -u generate_dataset.py --simulation=charged --seed=43
 python3 -u generate_dataset.py --simulation=gravity --n-balls=100 --seed=43
 ```
 
+### Notes
+On `jax<=0.4.6`, the `jit`-`pjit` merge can be deactivated making traning faster. This looks like an issue with dataloading and the validation training loop implementation and it does not affect SEGNN.
+```
+export JAX_JIT_PJIT_API_MERGE=0
+```
+
 ### Usage
 #### N-body (charged)
 ```
@@ -109,6 +115,7 @@ python validate.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --
 ```
 
 (configurations used in validation)
+
 
 
 ## Acknowledgments

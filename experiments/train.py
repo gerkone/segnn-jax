@@ -125,7 +125,7 @@ def train(
 
     for e in range(args.epochs):
         train_loss = 0.0
-        train_start = time.perf_counter_ns()
+        epoch_start = time.perf_counter_ns()
         for data in loader_train:
             graph, target = graph_transform(data)
             loss, params, segnn_state, opt_state = update_fn(
@@ -136,10 +136,11 @@ def train(
                 opt_state=opt_state,
             )
             train_loss += loss
-        train_time = (time.perf_counter_ns() - train_start) / 1e6
         train_loss /= len(loader_train)
+        epoch_time = (time.perf_counter_ns() - epoch_start) / 1e9
+
         print(
-            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {train_time:.2f}ms",
+            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {epoch_time:.2f}s",
             end="",
         )
         if e % args.val_freq == 0:
