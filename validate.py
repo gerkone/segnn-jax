@@ -194,11 +194,15 @@ if __name__ == "__main__":
         args.additional_message_irreps = e3nn.Irreps("2x0e")
 
     # Create hidden irreps
+    if not args.scn:
+        attr_irreps = e3nn.Irreps.spherical_harmonics(args.lmax_attributes)
+    else:
+        attr_irreps = e3nn.Irrep(f"{args.lmax_attribute}y")
+
     hidden_irreps = weight_balanced_irreps(
         scalar_units=args.units,
-        # attribute irreps
-        irreps_right=e3nn.Irreps.spherical_harmonics(args.lmax_attributes),
-        use_sh=True,
+        irreps_right=attr_irreps,
+        use_sh=(not args.scn),
         lmax=args.lmax_hidden,
     )
 

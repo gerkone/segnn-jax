@@ -74,11 +74,11 @@ def O3Transform(
             )
             + vel_embedding
         )
-
-        # scalar attribute to 1 by default
-        node_attributes = e3nn.IrrepsArray(
-            node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
-        )
+        if not scn:
+            # scalar attribute to 1 by default
+            node_attributes = e3nn.IrrepsArray(
+                node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
+            )
 
         return SteerableGraphsTuple(
             graph=GraphsTuple(

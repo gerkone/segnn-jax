@@ -52,7 +52,10 @@ def QM9GraphTransform(
         node_attributes = e3nn.IrrepsArray(
             attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
         )
-        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+        # scalar attribute to 1 by default
+        node_attributes = e3nn.IrrepsArray(
+            node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
+        )
 
         additional_message_features = e3nn.IrrepsArray(
             args.additional_message_irreps,
