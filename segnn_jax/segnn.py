@@ -6,11 +6,16 @@ import jax.numpy as jnp
 import jraph
 from jax.tree_util import Partial
 
-from .blocks import O3Layer, O3TensorProductGate
+from .blocks import O3_LAYERS, O3TensorProduct, O3TensorProductGate, TensorProduct
+from .config import config
 from .graph_utils import SteerableGraphsTuple, pooling
 
 
-def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable:
+def O3Embedding(
+    embed_irreps: e3nn.Irreps,
+    embed_edges: bool = True,
+    O3Layer: TensorProduct = O3TensorProduct,
+) -> Callable:
     """Linear steerable embedding.
 
     Embeds the graph nodes in the representation space :param embed_irreps:.
@@ -18,6 +23,7 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
     Args:
         embed_irreps: Output representation
         embed_edges: If true also embed edges/message passing features
+        O3Layer: Type of tensor product layer to use
 
     Returns:
         Function to embed graph nodes (and optionally edges)
@@ -27,10 +33,9 @@ def O3Embedding(embed_irreps: e3nn.Irreps, embed_edges: bool = True) -> Callable
         st_graph: SteerableGraphsTuple,
     ) -> SteerableGraphsTuple:
         graph = st_graph.graph
-        nodes = O3Layer(
-            embed_irreps,
-            name="embedding_nodes",
-        )(graph.nodes, st_graph.node_attributes)
+        nodes = O3Layer(embed_irreps, name="embedding_nodes")(
+            graph.nodes, st_graph.node_attributes
+        )
         st_graph = st_graph._replace(graph=graph._replace(nodes=nodes))
 
         # NOTE edge embedding is not in the original paper but can get good results
@@ -57,6 +62,7 @@ def O3Decoder(
     blocks: int = 1,
     task: str = "graph",
     pool: Optional[str] = "avg",
+    O3Layer: TensorProduct = O3TensorProduct,
 ):
     """Steerable pooler and decoder.
 
@@ -65,6 +71,8 @@ def O3Decoder(
         output_irreps: Output representation
         blocks: Number of tensor product blocks in the decoder
         task: Specifies where the output is located. Either 'graph' or 'node'
+        pool: Pooling method to use. One of 'avg', 'sum', 'none', None
+        O3Layer: Type of tensor product layer to use
 
     Returns:
         Decoded latent feature space to output space.
@@ -88,8 +96,7 @@ def O3Decoder(
 
         if task == "graph":
             # pool over graph
-            pooled_irreps = (latent_irreps.num_irreps * output_irreps).regroup()
-            nodes = O3Layer(pooled_irreps, name=f"prepool_{blocks}")(
+            nodes = O3Layer(latent_irreps, name=f"prepool_{blocks}")(
                 nodes, st_graph.node_attributes
             )
 
@@ -103,8 +110,10 @@ def O3Decoder(
 
             # post pool mlp (not steerable)
             for i in range(blocks):
-                nodes = O3TensorProductGate(pooled_irreps, name=f"postpool_{i}")(nodes)
-            nodes = O3Layer(output_irreps, name="output")(nodes)
+                nodes = O3TensorProductGate(
+                    latent_irreps, name=f"postpool_{i}", o3_layer=O3TensorProduct
+                )(nodes)
+            nodes = O3TensorProduct(output_irreps, name="output")(nodes)
 
         return nodes
 
@@ -125,6 +134,7 @@ class SEGNNLayer(hk.Module):
         blocks: int = 2,
         norm: Optional[str] = None,
         aggregate_fn: Optional[Callable] = jraph.segment_sum,
+        O3Layer: TensorProduct = O3TensorProduct,
     ):
         """
         Initialize the layer.
@@ -135,6 +145,7 @@ class SEGNNLayer(hk.Module):
             blocks: Number of tensor product blocks in the layer
             norm: Normalization type. Either be None, 'instance' or 'batch'
             aggregate_fn: Message aggregation function. Defaults to sum.
+            O3Layer: Type of tensor product layer to use
         """
         super().__init__(f"layer_{layer_num}")
         assert norm in ["batch", "instance", "none", None], f"Unknown norm '{norm}'"
@@ -142,6 +153,8 @@ class SEGNNLayer(hk.Module):
         self._blocks = blocks
         self._norm = norm
         self._aggregate_fn = aggregate_fn
+
+        self._O3Layer = O3Layer
 
     def _message(
         self,
@@ -187,7 +200,7 @@ class SEGNNLayer(hk.Module):
                 x, node_attribute
             )
         # last update layer without activation
-        update = O3Layer(self._output_irreps, name=f"tp_{self._blocks - 1}")(
+        update = self._O3Layer(self._output_irreps, name=f"tp_{self._blocks - 1}")(
             x, node_attribute
         )
         # residual connection
@@ -240,6 +253,7 @@ class SEGNN(hk.Module):
         task: Optional[str] = "graph",
         blocks_per_layer: int = 2,
         embed_msg_features: bool = False,
+        o3_layer: Optional[Union[str, TensorProduct]] = None,
     ):
         """
         Initialize the network.
@@ -253,6 +267,7 @@ class SEGNN(hk.Module):
             task: Specifies where the output is located. Either 'graph' or 'node'
             blocks_per_layer: Number of tensor product blocks in each message passing
             embed_msg_features: Set to true to also embed edges/message passing features
+            o3_layer: Tensor product layer type. "tpl", "fctp", "scn" or a custom layer
         """
         super().__init__()
 
@@ -265,14 +280,25 @@ class SEGNN(hk.Module):
         self._norm = norm
         self._blocks_per_layer = blocks_per_layer
 
+        # layer type
+        if o3_layer is None:
+            o3_layer = config("o3_layer")
+        if isinstance(o3_layer, str):
+            assert o3_layer in O3_LAYERS, f"Unknown O3 layer {o3_layer}."
+            self._O3Layer = O3_LAYERS[o3_layer]
+        else:
+            self._O3Layer = o3_layer
+
         self._embedding = O3Embedding(
             self._hidden_irreps_units[0],
+            O3Layer=self._O3Layer,
             embed_edges=self._embed_msg_features,
         )
 
         self._decoder = O3Decoder(
             latent_irreps=self._hidden_irreps_units[-1],
             output_irreps=output_irreps,
+            O3Layer=self._O3Layer,
             task=task,
             pool=pool,
         )

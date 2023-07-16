@@ -4,7 +4,6 @@ import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
-import jraph
 import numpy as np
 import torch
 from jraph import GraphsTuple, segment_mean
@@ -20,11 +19,15 @@ def O3Transform(
     node_features_irreps: e3nn.Irreps,
     edge_features_irreps: e3nn.Irreps,
     lmax_attributes: int,
+    scn: bool = False,
 ) -> Callable:
     """
     Build a transformation function that includes (nbody) O3 attributes to a graph.
     """
-    attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
+    if not scn:
+        attribute_irreps = e3nn.Irreps.spherical_harmonics(lmax_attributes)
+    else:
+        attribute_irreps = e3nn.Irrep("1o")
 
     @jax.jit
     def _o3_transform(
@@ -51,12 +54,17 @@ def O3Transform(
             jnp.concatenate((loc - mean_loc, vel, vel_abs), axis=-1),
         )
 
-        edge_attributes = e3nn.spherical_harmonics(
-            attribute_irreps, rel_pos, normalize=True, normalization="integral"
-        )
-        vel_embedding = e3nn.spherical_harmonics(
-            attribute_irreps, vel, normalize=True, normalization="integral"
-        )
+        if not scn:
+            edge_attributes = e3nn.spherical_harmonics(
+                attribute_irreps, rel_pos, normalize=True, normalization="integral"
+            )
+            vel_embedding = e3nn.spherical_harmonics(
+                attribute_irreps, vel, normalize=True, normalization="integral"
+            )
+        else:
+            edge_attributes = e3nn.IrrepsArray(attribute_irreps, rel_pos)
+            vel_embedding = e3nn.IrrepsArray(attribute_irreps, vel)
+
         # scatter edge attributes
         sum_n_node = tree.tree_leaves(nodes)[0].shape[0]
         node_attributes = (
@@ -66,9 +74,11 @@ def O3Transform(
             )
             + vel_embedding
         )
-
-        # scalar attribute to 1 by default
-        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+        if not scn:
+            # scalar attribute to 1 by default
+            node_attributes = e3nn.IrrepsArray(
+                node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
+            )
 
         return SteerableGraphsTuple(
             graph=GraphsTuple(
@@ -208,7 +218,10 @@ def setup_nbody_data(
         )
 
     o3_transform = O3Transform(
-        args.node_irreps, args.additional_message_irreps, args.lmax_attributes
+        args.node_irreps,
+        args.additional_message_irreps,
+        args.lmax_attributes,
+        scn=args.o3_layer == "scn",
     )
     graph_transform = NbodyGraphTransform(
         transform=o3_transform,

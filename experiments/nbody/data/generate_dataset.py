@@ -1,8 +1,8 @@
 """
 Generate charged and gravity datasets.
 
-charged: python3 generate_dataset.py --simulation=charged --num-train=10000
-gravity: python3 generate_dataset.py --simulation=gravity --num-train=10000 --n-balls=100
+charged: python3 generate_dataset.py --simulation=charged --num-train=10000 --seed=43
+gravity: python3 generate_dataset.py --simulation=gravity --num-train=10000 --n-balls=100 --seed=43
 """
 import argparse
 import time

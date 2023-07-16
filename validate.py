@@ -128,6 +128,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Use double precision in model",
     )
+    parser.add_argument(
+        "--scn",
+        action="store_true",
+        help="Train SEGNN with the eSCN optimization",
+    )
 
     # wandb parameters
     parser.add_argument(
@@ -181,6 +186,7 @@ if __name__ == "__main__":
             args.node_irreps = e3nn.Irreps("11x0e")
         args.output_irreps = e3nn.Irreps("1x0e")
         args.additional_message_irreps = e3nn.Irreps("1x0e")
+        assert not args.scn, "eSCN not implemented for qm9"
     elif args.dataset in ["charged", "gravity"]:
         args.task = "node"
         args.node_irreps = e3nn.Irreps("2x1o + 1x0e")
@@ -188,42 +194,56 @@ if __name__ == "__main__":
         args.additional_message_irreps = e3nn.Irreps("2x0e")
 
     # Create hidden irreps
+    if not args.scn:
+        attr_irreps = e3nn.Irreps.spherical_harmonics(args.lmax_attributes)
+    else:
+        attr_irreps = e3nn.Irrep(f"{args.lmax_attribute}y")
+
     hidden_irreps = weight_balanced_irreps(
         scalar_units=args.units,
-        # attribute irreps
-        irreps_right=e3nn.Irreps.spherical_harmonics(args.lmax_attributes),
-        use_sh=True,
+        irreps_right=attr_irreps,
+        use_sh=(not args.scn),
         lmax=args.lmax_hidden,
     )
 
+    args.o3_layer = "scn" if args.scn else "tpl"
+    del args.scn
+
     # build model
-    segnn = lambda x: SEGNN(
-        hidden_irreps=hidden_irreps,
-        output_irreps=args.output_irreps,
-        num_layers=args.layers,
-        task=args.task,
-        pool="avg",
-        blocks_per_layer=args.blocks,
-        norm=args.norm,
-    )(x)
+    def segnn(x):
+        return SEGNN(
+            hidden_irreps=hidden_irreps,
+            output_irreps=args.output_irreps,
+            num_layers=args.layers,
+            task=args.task,
+            pool="avg",
+            blocks_per_layer=args.blocks,
+            norm=args.norm,
+            o3_layer=args.o3_layer,
+        )(x)
+
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
     loader_train, loader_val, loader_test, graph_transform, eval_trn = setup_data(args)
 
     if args.dataset == "qm9":
-        from experiments.train import loss_fn
+        from experiments.train import loss_fn_wrapper
 
-        _mae = lambda p, t: jnp.abs(p - t)
+        def _mae(p, t):
+            return jnp.abs(p - t)
 
-        train_loss = partial(loss_fn, criterion=_mae, task=args.task)
-        eval_loss = partial(loss_fn, criterion=_mae, eval_trn=eval_trn, task=args.task)
+        train_loss = partial(loss_fn_wrapper, criterion=_mae, task=args.task)
+        eval_loss = partial(
+            loss_fn_wrapper, criterion=_mae, eval_trn=eval_trn, task=args.task
+        )
     if args.dataset in ["charged", "gravity"]:
-        from experiments.train import loss_fn
+        from experiments.train import loss_fn_wrapper
 
-        _mse = lambda p, t: jnp.power(p - t, 2)
+        def _mse(p, t):
+            return jnp.power(p - t, 2)
 
-        train_loss = partial(loss_fn, criterion=_mse, do_mask=False)
-        eval_loss = partial(loss_fn, criterion=_mse, do_mask=False)
+        train_loss = partial(loss_fn_wrapper, criterion=_mse, do_mask=False)
+        eval_loss = partial(loss_fn_wrapper, criterion=_mse, do_mask=False)
 
     train(
         key,

@@ -1,7 +1,7 @@
 --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 dm-haiku==0.0.9
-e3nn-jax==0.17.4
-jax[cuda]==0.4.8
+e3nn-jax==0.19.3
+jax[cuda]
 jraph==0.0.6.dev0
 numpy>=1.23.4
 optax==0.1.3

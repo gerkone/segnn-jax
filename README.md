@@ -17,7 +17,7 @@ python -m pip install -e .
 ### GPU support
 Upgrade `jax` to the gpu version
 ```
-pip install --upgrade "jax[cuda]==0.4.8" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --upgrade "jax[cuda]>=0.4.6" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 ## Validation
@@ -46,7 +46,7 @@ Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs
     <td>.0043</td>
     <td>21.22</td>
     <td>.0045</td>
-    <td>4.47</td>
+    <td>3.77</td>
   </tr>
   <tr>
     <td><code>gravity (position)</code> </td>
@@ -85,11 +85,17 @@ QM9 is automatically downloaded and processed when running the respective experi
 The N-body datasets have to be generated locally from the directory [experiments/nbody/data](experiments/nbody/data) (it will take some time, especially n-body `gravity`)
 #### Charged dataset (5 bodies, 10000 training samples)
 ```
-python3 -u generate_dataset.py --simulation=charged
+python3 -u generate_dataset.py --simulation=charged --seed=43
 ```
 #### Gravity dataset (100 bodies, 10000 training samples)
 ```
-python3 -u generate_dataset.py --simulation=gravity --n-balls=100
+python3 -u generate_dataset.py --simulation=gravity --n-balls=100 --seed=43
+```
+
+### Notes
+On `jax<=0.4.6`, the `jit`-`pjit` merge can be deactivated making traning faster (on nbody). This looks like an issue with dataloading and the validation training loop implementation and it does not affect SEGNN.
+```
+export JAX_JIT_PJIT_API_MERGE=0
 ```
 
 ### Usage
@@ -109,6 +115,7 @@ python validate.py --dataset=qm9 --epochs=1000 --target=alpha --lmax-hidden=2 --
 ```
 
 (configurations used in validation)
+
 
 
 ## Acknowledgments

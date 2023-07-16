@@ -308,7 +308,9 @@ class QM9(InMemoryDataset):
         torch.save(self.collate(data_list), self.processed_paths[0])
 
     def get_O3_attr(self, edge_index, pos, attr_irreps):
-        """Creates spherical harmonic edge attributes and node attributes for the SEGNN"""
+        """
+        Creates spherical harmonic edge attributes and node attributes for the SEGNN.
+        """
         rel_pos = (
             pos[edge_index[0]] - pos[edge_index[1]]
         )  # pos_j - pos_i (note in edge_index stores tuples like (j,i))

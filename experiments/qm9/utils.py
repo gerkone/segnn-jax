@@ -52,7 +52,10 @@ def QM9GraphTransform(
         node_attributes = e3nn.IrrepsArray(
             attribute_irreps, jnp.pad(jnp.array(data.node_attr), node_attr_pad)
         )
-        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+        # scalar attribute to 1 by default
+        node_attributes = e3nn.IrrepsArray(
+            node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
+        )
 
         additional_message_features = e3nn.IrrepsArray(
             args.additional_message_irreps,
@@ -129,7 +132,8 @@ def setup_qm9_data(
 
     target_mean, target_mad = dataset_train.calc_stats()
 
-    remove_offsets = lambda t: (t - target_mean) / target_mad
+    def remove_offsets(t):
+        return (t - target_mean) / target_mad
 
     # not great and very slow due to huge padding
     loader_train = DataLoader(
@@ -158,6 +162,7 @@ def setup_qm9_data(
         train_trn=remove_offsets,
     )
 
-    add_offsets = lambda p: p * target_mad + target_mean
+    def add_offsets(p):
+        return p * target_mad + target_mean
 
     return loader_train, loader_val, loader_test, to_graphs_tuple, add_offsets

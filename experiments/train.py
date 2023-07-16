@@ -4,16 +4,16 @@ from typing import Callable, Tuple
 
 import haiku as hk
 import jax
-from jax import jit
 import jax.numpy as jnp
 import jraph
 import optax
+from jax import jit
 
 from segnn_jax import SteerableGraphsTuple
 
 
 @partial(jit, static_argnames=["model_fn", "criterion", "task", "do_mask", "eval_trn"])
-def loss_fn(
+def loss_fn_wrapper(
     params: hk.Params,
     state: hk.State,
     st_graph: SteerableGraphsTuple,
@@ -27,16 +27,21 @@ def loss_fn(
     pred, state = model_fn(params, state, st_graph)
     if eval_trn is not None:
         pred = eval_trn(pred)
-    if task == "node":
-        mask = jraph.get_node_padding_mask(st_graph.graph)
-    if task == "graph":
-        mask = jraph.get_graph_padding_mask(st_graph.graph)
-    # broadcase mask for vector targets
-    if len(pred.shape) == 2:
-        mask = mask[:, jnp.newaxis]
+
     if do_mask:
-        target = target * mask
-        pred = pred * mask
+        if task == "node":
+            mask = jraph.get_node_padding_mask(st_graph.graph)
+        if task == "graph":
+            mask = jraph.get_graph_padding_mask(st_graph.graph)
+        # broadcast mask for vector targets
+        if len(pred.shape) == 2:
+            mask = mask[:, jnp.newaxis]
+    else:
+        mask = jnp.ones_like(target)
+
+    target = target * mask
+    pred = pred * mask
+
     assert target.shape == pred.shape
     return jnp.sum(criterion(pred, target)) / jnp.count_nonzero(mask), state
 
@@ -125,7 +130,7 @@ def train(
 
     for e in range(args.epochs):
         train_loss = 0.0
-        train_start = time.perf_counter_ns()
+        epoch_start = time.perf_counter_ns()
         for data in loader_train:
             graph, target = graph_transform(data)
             loss, params, segnn_state, opt_state = update_fn(
@@ -136,10 +141,11 @@ def train(
                 opt_state=opt_state,
             )
             train_loss += loss
-        train_time = (time.perf_counter_ns() - train_start) / 1e6
         train_loss /= len(loader_train)
+        epoch_time = (time.perf_counter_ns() - epoch_start) / 1e9
+
         print(
-            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {train_time:.2f}ms",
+            f"[Epoch {e+1:>4}] train loss {train_loss:.6f}, epoch {epoch_time:.2f}s",
             end="",
         )
         if e % args.val_freq == 0:
@@ -157,7 +163,7 @@ def train(
     test_loss = 0
     _, test_loss = eval_fn(loader_test, params, segnn_state)
     # ignore compilation time
-    avg_time = avg_time[2:]
+    avg_time = avg_time[1:] if len(avg_time) > 1 else avg_time
     avg_time = sum(avg_time) / len(avg_time)
     print(
         "Training done.\n"
