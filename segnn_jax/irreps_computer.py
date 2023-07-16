@@ -30,7 +30,8 @@ def weight_balanced_irreps(
     scalar_units: int, irreps_right: Irreps, use_sh: bool = True, lmax: int = None
 ) -> Irreps:
     """
-    Determines left Irreps such that the weighted tensor product irreps_left x irreps_right
+    Determines irreps_left such that the parametrized tensor product
+        Linear(tensor_product(irreps_left, irreps_right))
     has (at least) scalar_units weights.
     """
     # irrep order

@@ -4,10 +4,10 @@ from typing import Callable, Tuple
 
 import haiku as hk
 import jax
-from jax import jit
 import jax.numpy as jnp
 import jraph
 import optax
+from jax import jit
 
 from segnn_jax import SteerableGraphsTuple
 

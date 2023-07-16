@@ -129,7 +129,8 @@ def setup_qm9_data(
 
     target_mean, target_mad = dataset_train.calc_stats()
 
-    remove_offsets = lambda t: (t - target_mean) / target_mad
+    def remove_offsets(t):
+        return (t - target_mean) / target_mad
 
     # not great and very slow due to huge padding
     loader_train = DataLoader(
@@ -158,6 +159,7 @@ def setup_qm9_data(
         train_trn=remove_offsets,
     )
 
-    add_offsets = lambda p: p * target_mad + target_mean
+    def add_offsets(p):
+        return p * target_mad + target_mean
 
     return loader_train, loader_val, loader_test, to_graphs_tuple, add_offsets

@@ -46,7 +46,7 @@ Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs
     <td>.0043</td>
     <td>21.22</td>
     <td>.0045</td>
-    <td>4.47</td>
+    <td>3.85</td>
   </tr>
   <tr>
     <td><code>gravity (position)</code> </td>

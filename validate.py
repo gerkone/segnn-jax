@@ -197,15 +197,17 @@ if __name__ == "__main__":
     )
 
     # build model
-    segnn = lambda x: SEGNN(
-        hidden_irreps=hidden_irreps,
-        output_irreps=args.output_irreps,
-        num_layers=args.layers,
-        task=args.task,
-        pool="avg",
-        blocks_per_layer=args.blocks,
-        norm=args.norm,
-    )(x)
+    def segnn(x):
+        return SEGNN(
+            hidden_irreps=hidden_irreps,
+            output_irreps=args.output_irreps,
+            num_layers=args.layers,
+            task=args.task,
+            pool="avg",
+            blocks_per_layer=args.blocks,
+            norm=args.norm,
+        )(x)
+
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
 
     loader_train, loader_val, loader_test, graph_transform, eval_trn = setup_data(args)
@@ -213,14 +215,16 @@ if __name__ == "__main__":
     if args.dataset == "qm9":
         from experiments.train import loss_fn
 
-        _mae = lambda p, t: jnp.abs(p - t)
+        def _mae(p, t):
+            return jnp.abs(p - t)
 
         train_loss = partial(loss_fn, criterion=_mae, task=args.task)
         eval_loss = partial(loss_fn, criterion=_mae, eval_trn=eval_trn, task=args.task)
     if args.dataset in ["charged", "gravity"]:
         from experiments.train import loss_fn
 
-        _mse = lambda p, t: jnp.power(p - t, 2)
+        def _mse(p, t):
+            return jnp.power(p - t, 2)
 
         train_loss = partial(loss_fn, criterion=_mse, do_mask=False)
         eval_loss = partial(loss_fn, criterion=_mse, do_mask=False)

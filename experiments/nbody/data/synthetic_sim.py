@@ -1,6 +1,3 @@
-import time
-
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -299,49 +296,3 @@ class GravitySim(object):
         vel_save += np.random.randn(T_save, N, self.dim) * self.noise_var
         force_save += np.random.randn(T_save, N, self.dim) * self.noise_var
         return pos_save, vel_save, force_save, mass
-
-
-if __name__ == "__main__":
-    from tqdm import tqdm
-
-    color_map = "summer"
-    cmap = plt.get_cmap(color_map)
-
-    np.random.seed(43)
-
-    sim = GravitySim(n_balls=100, loc_std=1)
-
-    t = time.time()
-    loc, vel, force, mass = sim.sample_trajectory(T=5000, sample_freq=1)
-
-    print("Simulation time: {}".format(time.time() - t))
-    plt.figure()
-    axes = plt.gca()
-    axes.set_xlim([-4.0, 4.0])
-    axes.set_ylim([-4.0, 4.0])
-    # for i in range(loc.shape[-2]):
-    #     plt.plot(loc[:, i, 0], loc[:, i, 1], alpha=0.1, linewidth=1)
-    #     plt.plot(loc[0, i, 0], loc[0, i, 1], 'o')
-
-    offset = 4000
-    N_frames = loc.shape[0] - offset
-    N_particles = loc.shape[-2]
-
-    for i in tqdm(range(N_particles)):
-        color = cmap(i / N_particles)
-        # for j in range(loc.shape[0]-2):
-        for j in range(offset, offset + N_frames):
-            plt.plot(
-                loc[j : j + 2, i, 0],
-                loc[j : j + 2, i, 1],
-                alpha=0.2 + 0.7 * ((j - offset) / N_frames) ** 4,
-                linewidth=1,
-                color=color,
-            )
-        plt.plot(loc[-1, i, 0], loc[-1, i, 1], "o", markersize=3, color=color)
-    plt.axis("off")
-    # plt.figure()
-    # energies = [sim._energy(loc[i, :, :], vel[i, :, :], mass, sim.interaction_strength) for i in
-    #             range(loc.shape[0])]
-    # plt.plot(energies)
-    plt.show()
