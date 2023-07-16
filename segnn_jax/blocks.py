@@ -1,11 +1,12 @@
 import warnings
+from abc import ABC, abstractmethod
 from typing import Callable, Optional, Tuple, Union
 
 import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from e3nn_jax._src.tensor_products import naive_broadcast_decorator
+from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
 
 from .config import config
 
@@ -27,14 +28,8 @@ def uniform_init(
     )
 
 
-class O3TensorProduct(hk.Module):
-    """
-    O(3) equivariant linear parametrized tensor product layer.
-
-    Functionally the same as O3TensorProductLegacy, but around 5-10% faster.
-    FullyConnectedTensorProduct seems faster than tensor_product + linear:
-    https://github.com/e3nn/e3nn-jax/releases/tag/0.14.0
-    """
+class TensorProduct(hk.Module, ABC):
+    """O(3) equivariant linear parametrized tensor product layer."""
 
     def __init__(
         self,
@@ -54,10 +49,10 @@ class O3TensorProduct(hk.Module):
             name: Name of the linear layer params
             init_fn: Weight initialization function. Default is uniform.
             gradient_normalization: Gradient normalization method. Default is "path"
-                NOTE: gradient_normalization="element" is the default in torch and haiku.
+            NOTE: gradient_normalization="element" is the default in torch and haiku.
             path_normalization: Path normalization method. Default is "element"
         """
-        super().__init__(name)
+        super().__init__(name=name)
 
         if not isinstance(output_irreps, e3nn.Irreps):
             output_irreps = e3nn.Irreps(output_irreps)
@@ -77,11 +72,96 @@ class O3TensorProduct(hk.Module):
 
         self.biases = biases and "0e" in self.output_irreps
 
+    def _check_input(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
+    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        if not y:
+            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
+
+        if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
+            warnings.warn(
+                f"The specified output irreps ({self.output_irreps}) are not scalars "
+                "but both operands are. This can have undesired behaviour (NaN). Try "
+                "redistributing them into scalars or choose higher orders."
+            )
+
+        return x, y
+
+    @abstractmethod
+    def __call__(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
+    ) -> e3nn.IrrepsArray:
+        """Applies an O(3) equivariant linear parametrized tensor product layer.
+
+        Args:
+            x (IrrepsArray): Left tensor
+            y (IrrepsArray): Right tensor. If None it defaults to np.ones.
+
+        Returns:
+            The output to the weighted tensor product (IrrepsArray).
+        """
+        raise NotImplementedError
+
+
+class O3TensorProduct(TensorProduct):
+    """O(3) equivariant linear parametrized tensor product layer.
+
+    Original O3TensorProduct version that uses tensor_product + Linear instead of
+    FullyConnectedTensorProduct.
+    From e3nn 0.19.2 (https://github.com/e3nn/e3nn-jax/releases/tag/0.19.2), this is
+    as fast as FullyConnectedTensorProduct.
+    """
+
+    def __init__(
+        self,
+        output_irreps: e3nn.Irreps,
+        *,
+        biases: bool = True,
+        name: Optional[str] = None,
+        init_fn: Optional[InitFn] = None,
+        gradient_normalization: Optional[Union[str, float]] = "element",
+        path_normalization: Optional[Union[str, float]] = None,
+    ):
+        super().__init__(
+            output_irreps,
+            biases=biases,
+            name=name,
+            init_fn=init_fn,
+            gradient_normalization=gradient_normalization,
+            path_normalization=path_normalization,
+        )
+
+        self._linear = e3nn.haiku.Linear(
+            self.output_irreps,
+            get_parameter=self.get_parameter,
+            biases=self.biases,
+            name=f"{self.name}_linear",
+            gradient_normalization=self._gradient_normalization,
+            path_normalization=self._path_normalization,
+        )
+
+    def __call__(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
+    ) -> TensorProductFn:
+        x, y = self._check_input(x, y)
+        # tensor product + linear
+        tp = self._linear(e3nn.tensor_product(x, y))
+        return tp
+
+
+class O3TensorProductFC(TensorProduct):
+    """
+    O(3) equivariant linear parametrized tensor product layer.
+
+    Functionally the same as O3TensorProduct, but uses FullyConnectedTensorProduct and
+    is slightly slower (~5-10%) than tensor_prodict + Linear.
+    """
+
     def _build_tensor_product(
         self, left_irreps: e3nn.Irreps, right_irreps: e3nn.Irreps
     ) -> Callable:
         """Build the tensor product function."""
-        tp = e3nn.FunctionalFullyConnectedTensorProduct(
+        tp = FunctionalFullyConnectedTensorProduct(
             left_irreps,
             right_irreps,
             self.output_irreps,
@@ -103,9 +183,18 @@ class O3TensorProduct(hk.Module):
         ]
 
         def tensor_product(x, y, **kwargs):
-            return tp.left_right(ws, x, y, **kwargs)._convert(self.output_irreps)
+            return tp.left_right(ws, x, y, **kwargs).rechunk(self.output_irreps)
 
-        return naive_broadcast_decorator(tensor_product)
+        # naive broadcasting wrapper
+        # TODO: not the best
+        def tp_wrapper(*args):
+            leading_shape = jnp.broadcast_shapes(*(arg.shape[:-1] for arg in args))
+            args = [arg.broadcast_to(leading_shape + (-1,)) for arg in args]
+            for _ in range(len(leading_shape)):
+                f = jax.vmap(tensor_product)
+            return f(*args)
+
+        return tp_wrapper
 
     def _build_biases(self) -> Callable:
         """Build the add bias function."""
@@ -133,25 +222,7 @@ class O3TensorProduct(hk.Module):
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
     ) -> e3nn.IrrepsArray:
-        """Applies an O(3) equivariant linear parametrized tensor product layer.
-
-        Args:
-            x (IrrepsArray): Left tensor
-            y (IrrepsArray): Right tensor. If None it defaults to np.ones.
-
-        Returns:
-            The output to the weighted tensor product (IrrepsArray).
-        """
-
-        if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
-
-        if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
-            warnings.warn(
-                f"The specified output irreps ({self.output_irreps}) are not scalars "
-                "but both operands are. This can have undesired behaviour (NaN). Try "
-                "redistributing them into scalars or choose higher orders."
-            )
+        x, y = self._check_input(x, y)
 
         tp = self._build_tensor_product(x.irreps, y.irreps)
         output = tp(x, y, **kwargs)
@@ -164,78 +235,15 @@ class O3TensorProduct(hk.Module):
         return output
 
 
-def O3TensorProductLegacy(
-    output_irreps: e3nn.Irreps,
-    *,
-    biases: bool = True,
-    name: Optional[str] = None,
-    init_fn: Optional[InitFn] = None,
-    gradient_normalization: Optional[Union[str, float]] = "element",
-    path_normalization: Optional[Union[str, float]] = None,
-):
-    """O(3) equivariant linear parametrized tensor product layer.
-    Legacy version of O3TensorProduct that uses e3nn.haiku.Linear instead of
-    e3nn.FunctionalFullyConnectedTensorProduct.
-
-    Args:
-        output_irreps: Output representation
-        biases: If set ot true will add biases
-        name: Name of the linear layer params
-        init_fn: Weight initialization function. Default is uniform.
-        gradient_normalization: Gradient normalization method. Default is "path"
-            NOTE: gradient_normalization="element" is the default in torch and haiku.
-        path_normalization: Path normalization method. Default is "element"
-
-    Returns:
-        A function that returns the output to the weighted tensor product.
-    """
-
-    if not isinstance(output_irreps, e3nn.Irreps):
-        output_irreps = e3nn.Irreps(output_irreps)
-
-    if not init_fn:
-        init_fn = uniform_init
-
-    linear = e3nn.haiku.Linear(
-        output_irreps,
-        get_parameter=init_fn,
-        biases=biases,
-        name=name,
-        gradient_normalization=gradient_normalization,
-        path_normalization=path_normalization,
-    )
-
-    def _tensor_product(
-        x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> TensorProductFn:
-        """Applies an O(3) equivariant linear parametrized tensor product layer.
-
-        Args:
-            x (IrrepsArray): Left tensor
-            y (IrrepsArray): Right tensor. If None it defaults to np.ones.
-
-        Returns:
-            The output to the weighted tensor product (IrrepsArray).
-        """
-
-        if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
-
-        if x.irreps.lmax == 0 and y.irreps.lmax == 0 and output_irreps.lmax > 0:
-            warnings.warn(
-                f"The specified output irreps ({output_irreps}) are not scalars "
-                "but both operands are. This can have undesired behaviour (NaN). Try "
-                "redistributing them into scalars or choose higher orders."
-            )
-
-        tp = e3nn.tensor_product(x, y)
-
-        return linear(tp)
-
-    return _tensor_product
+class O3TensorProductSCN(TensorProduct):
+    pass
 
 
-O3Layer = O3TensorProduct if config("o3_layer") == "new" else O3TensorProductLegacy
+O3_LAYERS = {
+    "tpl": O3TensorProduct,
+    "fctp": O3TensorProductFC,
+    "scn": O3TensorProductSCN,
+}
 
 
 def O3TensorProductGate(
@@ -246,6 +254,7 @@ def O3TensorProductGate(
     gate_activation: Optional[Callable] = None,
     name: Optional[str] = None,
     init_fn: Optional[InitFn] = None,
+    o3_layer: Optional[Union[str, TensorProduct]] = None,
 ) -> TensorProductFn:
     """Non-linear (gated) O(3) equivariant linear tensor product layer.
 
@@ -257,9 +266,10 @@ def O3TensorProductGate(
         scalar_activation: Activation function for scalars
         gate_activation: Activation function for higher order
         name: Name of the linear layer params
+        o3_layer: Tensor product layer type. "tpl", "fctp", "scn" or a custom layer
 
     Returns:
-        Function that applies the gated tensor product layer.
+        Function that applies the gated tensor product layer
     """
 
     if not isinstance(output_irreps, e3nn.Irreps):
@@ -269,6 +279,16 @@ def O3TensorProductGate(
     gate_irreps = e3nn.Irreps(
         f"{output_irreps.num_irreps - output_irreps.count('0e')}x0e"
     )
+
+    if o3_layer is None:
+        o3_layer = config("o3_layer")
+
+    if isinstance(o3_layer, str):
+        assert o3_layer in O3_LAYERS, f"Unknown O3 layer {o3_layer}."
+        O3Layer = O3_LAYERS[o3_layer]
+    else:
+        O3Layer = o3_layer
+
     tensor_product = O3Layer(
         (gate_irreps + output_irreps).regroup(),
         biases=biases,

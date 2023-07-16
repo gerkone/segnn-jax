@@ -4,7 +4,6 @@ import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 import jax.tree_util as tree
-import jraph
 import numpy as np
 import torch
 from jraph import GraphsTuple, segment_mean
@@ -68,7 +67,9 @@ def O3Transform(
         )
 
         # scalar attribute to 1 by default
-        node_attributes.array = node_attributes.array.at[:, 0].set(1.0)
+        node_attributes = e3nn.IrrepsArray(
+            node_attributes.irreps, node_attributes.array.at[:, 0].set(1.0)
+        )
 
         return SteerableGraphsTuple(
             graph=GraphsTuple(
