@@ -85,11 +85,11 @@ QM9 is automatically downloaded and processed when running the respective experi
 The N-body datasets have to be generated locally from the directory [experiments/nbody/data](experiments/nbody/data) (it will take some time, especially n-body `gravity`)
 #### Charged dataset (5 bodies, 10000 training samples)
 ```
-python3 -u generate_dataset.py --simulation=charged
+python3 -u generate_dataset.py --simulation=charged --seed=43
 ```
 #### Gravity dataset (100 bodies, 10000 training samples)
 ```
-python3 -u generate_dataset.py --simulation=gravity --n-balls=100
+python3 -u generate_dataset.py --simulation=gravity --n-balls=100 --seed=43
 ```
 
 ### Usage

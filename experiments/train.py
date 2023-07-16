@@ -157,7 +157,7 @@ def train(
     test_loss = 0
     _, test_loss = eval_fn(loader_test, params, segnn_state)
     # ignore compilation time
-    avg_time = avg_time[2:]
+    avg_time = avg_time[1:] if len(avg_time) > 1 else avg_time
     avg_time = sum(avg_time) / len(avg_time)
     print(
         "Training done.\n"

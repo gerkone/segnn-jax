@@ -128,6 +128,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Use double precision in model",
     )
+    parser.add_argument(
+        "--scn",
+        action="store_true",
+        help="Train SEGNN with the eSCN optimization",
+    )
 
     # wandb parameters
     parser.add_argument(
@@ -181,6 +186,7 @@ if __name__ == "__main__":
             args.node_irreps = e3nn.Irreps("11x0e")
         args.output_irreps = e3nn.Irreps("1x0e")
         args.additional_message_irreps = e3nn.Irreps("1x0e")
+        assert not args.scn, "eSCN not implemented for qm9"
     elif args.dataset in ["charged", "gravity"]:
         args.task = "node"
         args.node_irreps = e3nn.Irreps("2x1o + 1x0e")
@@ -196,6 +202,9 @@ if __name__ == "__main__":
         lmax=args.lmax_hidden,
     )
 
+    args.o3_layer = "scn" if args.scn else "tpl"
+    del args.scn
+
     # build model
     def segnn(x):
         return SEGNN(
@@ -206,6 +215,7 @@ if __name__ == "__main__":
             pool="avg",
             blocks_per_layer=args.blocks,
             norm=args.norm,
+            o3_layer=args.o3_layer,
         )(x)
 
     segnn = hk.without_apply_rng(hk.transform_with_state(segnn))
