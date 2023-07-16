@@ -6,6 +6,7 @@ import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
+from e3nn_jax.experimental import linear_shtp as escn
 from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
 
 from .config import config
@@ -182,19 +183,19 @@ class O3TensorProductFC(TensorProduct):
             for ins in tp.instructions
         ]
 
-        def tensor_product(x, y, **kwargs):
+        def _tensor_product(x, y, **kwargs):
             return tp.left_right(ws, x, y, **kwargs).rechunk(self.output_irreps)
 
         # naive broadcasting wrapper
         # TODO: not the best
-        def tp_wrapper(*args):
+        def _tp_wrapper(*args):
             leading_shape = jnp.broadcast_shapes(*(arg.shape[:-1] for arg in args))
             args = [arg.broadcast_to(leading_shape + (-1,)) for arg in args]
             for _ in range(len(leading_shape)):
-                f = jax.vmap(tensor_product)
+                f = jax.vmap(_tensor_product)
             return f(*args)
 
-        return tp_wrapper
+        return _tp_wrapper
 
     def _build_biases(self) -> Callable:
         """Build the add bias function."""
@@ -210,14 +211,14 @@ class O3TensorProductFC(TensorProduct):
         b = e3nn.IrrepsArray(f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b))
 
         # TODO: could be improved
-        def _wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+        def _bias_wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
             scalars = x.filter("0e")
             other = x.filter(drop="0e")
             return e3nn.concatenate(
                 [scalars + b.broadcast_to(scalars.shape), other], axis=1
             )
 
-        return _wrapper
+        return _bias_wrapper
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
@@ -236,7 +237,49 @@ class O3TensorProductFC(TensorProduct):
 
 
 class O3TensorProductSCN(TensorProduct):
-    pass
+    """
+    O(3) equivariant linear parametrized tensor product layer.
+
+    O3TensorProduct with eSCN optimization for larger spherical harmonic orders. Should
+    be used without spherical harmonics on the inputs.
+    """
+
+    def __init__(
+        self,
+        output_irreps: e3nn.Irreps,
+        *,
+        biases: bool = True,
+        name: Optional[str] = None,
+        init_fn: Optional[InitFn] = None,
+        gradient_normalization: Optional[Union[str, float]] = None,
+        path_normalization: Optional[Union[str, float]] = None,
+    ):
+        super().__init__(
+            output_irreps,
+            biases=biases,
+            name=name,
+            init_fn=init_fn,
+            gradient_normalization=gradient_normalization,
+            path_normalization=path_normalization,
+        )
+
+        self._linear = e3nn.haiku.Linear(
+            self.output_irreps,
+            get_parameter=self.get_parameter,
+            biases=self.biases,
+            name=f"{self.name}_linear",
+            gradient_normalization=self._gradient_normalization,
+            path_normalization=self._path_normalization,
+        )
+
+    def __call__(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
+    ) -> e3nn.IrrepsArray:
+        """Apply the layer. y must not be into spherical harmonics."""
+        x, y = self._check_input(x, y)
+        shtp = e3nn.utils.vmap(escn.shtp, in_axes=(0, 0, None))
+        tp = shtp(x, y, self.output_irreps)
+        return self._linear(tp)
 
 
 O3_LAYERS = {
