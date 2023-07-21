@@ -116,19 +116,9 @@ def setup_qm9_data(
         feature_type=args.feature_type,
     )
 
-    max_batch_nodes = int(
-        max(
-            sum(d.top_n_nodes(args.batch_size))
-            for d in [dataset_train, dataset_val, dataset_test]
-        )
-    )
-
-    max_batch_edges = int(
-        max(
-            sum(d.top_n_edges(args.batch_size))
-            for d in [dataset_train, dataset_val, dataset_test]
-        )
-    )
+    # 0.8 (un)safety factor for rejitting
+    max_batch_nodes = int(0.8 * sum(dataset_test.top_n_nodes(args.batch_size)))
+    max_batch_edges = int(0.8 * sum(dataset_test.top_n_edges(args.batch_size)))
 
     target_mean, target_mad = dataset_train.calc_stats()
 
