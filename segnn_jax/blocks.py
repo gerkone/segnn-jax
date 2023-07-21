@@ -136,10 +136,8 @@ class O3TensorProduct(TensorProduct):
             self.output_irreps,
             get_parameter=self.get_parameter,
             biases=self.biases,
-            name=f"{self.name}_linear",
             gradient_normalization=self._gradient_normalization,
             path_normalization=self._path_normalization,
-            force_irreps_out=False,
         )
 
     def _check_input(
@@ -277,7 +275,6 @@ class O3TensorProductSCN(TensorProduct):
             self.output_irreps,
             get_parameter=self.get_parameter,
             biases=self.biases,
-            name=f"{self.name}_linear",
             gradient_normalization=self._gradient_normalization,
             path_normalization=self._path_normalization,
         )
@@ -290,7 +287,7 @@ class O3TensorProductSCN(TensorProduct):
         return super()._check_input(x, y)
 
     def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
     ) -> e3nn.IrrepsArray:
         """Apply the layer. y must not be into spherical harmonics."""
         x, y = self._check_input(x, y)
@@ -367,8 +364,8 @@ def O3TensorProductGate(
         tp = tensor_product(x, y, **kwargs)
         # skip gate if the gating scalars are not reachable
         if len(gate_irreps.filter(drop=tp.irreps)) > 0:
-            return e3nn.gate(tp, scalar_activation, odd_gate_act=gate_activation)
-        else:
             return tp
+        else:
+            return e3nn.gate(tp, scalar_activation, odd_gate_act=gate_activation)
 
     return _gated_tensor_product
