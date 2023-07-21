@@ -139,7 +139,17 @@ class O3TensorProduct(TensorProduct):
             name=f"{self.name}_linear",
             gradient_normalization=self._gradient_normalization,
             path_normalization=self._path_normalization,
+            force_irreps_out=False,
         )
+
+    def _check_input(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
+    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        x, y = super()._check_input(x, y)
+        miss = self.output_irreps.filter(drop=e3nn.tensor_product(x.irreps, y.irreps))
+        if len(miss) > 0:
+            warnings.warn(f"Output irreps: {miss} are unreachable and were ignored.")
+        return x, y
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
@@ -355,6 +365,10 @@ def O3TensorProductGate(
         x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
     ) -> e3nn.IrrepsArray:
         tp = tensor_product(x, y, **kwargs)
-        return e3nn.gate(tp, even_act=scalar_activation, odd_gate_act=gate_activation)
+        # skip gate if the gating scalars are not reachable
+        if len(gate_irreps.filter(drop=tp.irreps)) > 0:
+            return e3nn.gate(tp, scalar_activation, odd_gate_act=gate_activation)
+        else:
+            return tp
 
     return _gated_tensor_product
