@@ -6,8 +6,16 @@ import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from e3nn_jax.experimental import linear_shtp as escn
-from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
+
+try:
+    from e3nn_jax.experimental import linear_shtp as escn
+except ImportError:
+    escn = None
+
+try:
+    from e3nn_jax import FunctionalFullyConnectedTensorProduct
+except ImportError:
+    from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
 
 from .config import config
 
@@ -146,7 +154,7 @@ class O3TensorProduct(TensorProduct):
         x, y = super()._check_input(x, y)
         miss = self.output_irreps.filter(drop=e3nn.tensor_product(x.irreps, y.irreps))
         if len(miss) > 0:
-            warnings.warn(f"Output irreps: {miss} are unreachable and were ignored.")
+            warnings.warn(f"Output irreps: '{miss}' are unreachable and were ignored.")
         return x, y
 
     def __call__(
@@ -270,6 +278,12 @@ class O3TensorProductSCN(TensorProduct):
             gradient_normalization=gradient_normalization,
             path_normalization=path_normalization,
         )
+
+        if escn is None:
+            raise ImportError(
+                "eSCN is available from e3nn-jax>=0.17.4. "
+                f"Your version: {e3nn.__version__}"
+            )
 
         self._linear = e3nn.haiku.Linear(
             self.output_irreps,
