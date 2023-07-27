@@ -12,7 +12,7 @@ from jax import jit
 from segnn_jax import SteerableGraphsTuple
 
 
-@partial(jit, static_argnames=["model_fn", "criterion", "task", "do_mask", "eval_trn"])
+@partial(jit, static_argnames=["model_fn", "criterion", "do_mask", "eval_trn"])
 def loss_fn_wrapper(
     params: hk.Params,
     state: hk.State,
@@ -20,7 +20,6 @@ def loss_fn_wrapper(
     target: jnp.ndarray,
     model_fn: Callable,
     criterion: Callable,
-    task: str = "node",
     do_mask: bool = True,
     eval_trn: Callable = None,
 ) -> Tuple[float, hk.State]:
@@ -29,9 +28,9 @@ def loss_fn_wrapper(
         pred = eval_trn(pred)
 
     if do_mask:
-        if task == "node":
+        if target.shape == st_graph.graph.nodes.shape:
             mask = jraph.get_node_padding_mask(st_graph.graph)
-        if task == "graph":
+        else:
             mask = jraph.get_graph_padding_mask(st_graph.graph)
         # broadcast mask for vector targets
         if len(pred.shape) == 2:
@@ -140,7 +139,7 @@ def train(
                 target=target,
                 opt_state=opt_state,
             )
-            train_loss += loss
+            train_loss += jax.block_until_ready(loss)
         train_loss /= len(loader_train)
         epoch_time = (time.perf_counter_ns() - epoch_start) / 1e9
 

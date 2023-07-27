@@ -62,6 +62,7 @@ def O3Decoder(
     blocks: int = 1,
     task: str = "graph",
     pool: Optional[str] = "avg",
+    pooled_irreps: Optional[e3nn.Irreps] = None,
     O3Layer: TensorProduct = O3TensorProduct,
 ):
     """Steerable pooler and decoder.
@@ -72,6 +73,7 @@ def O3Decoder(
         blocks: Number of tensor product blocks in the decoder
         task: Specifies where the output is located. Either 'graph' or 'node'
         pool: Pooling method to use. One of 'avg', 'sum', 'none', None
+        pooled_irreps: Pooled irreps. When left None the original implementation is used
         O3Layer: Type of tensor product layer to use
 
     Returns:
@@ -80,6 +82,12 @@ def O3Decoder(
 
     assert task in ["node", "graph"], f"Unknown task {task}"
     assert pool in ["avg", "sum", "none", None], f"Unknown pooling '{pool}'"
+
+    # NOTE: original implementation restricted final layers to pooled_irreps.
+    #  This way gates cannot be applied in the post pool block when returning vectors,
+    #  because the gating scalars cannot be reached.
+    if pooled_irreps is None:
+        pooled_irreps = (output_irreps * latent_irreps.num_irreps).regroup()
 
     def _decoder(st_graph: SteerableGraphsTuple):
         nodes = st_graph.graph.nodes
@@ -96,7 +104,7 @@ def O3Decoder(
 
         if task == "graph":
             # pool over graph
-            nodes = O3Layer(latent_irreps, name=f"prepool_{blocks}")(
+            nodes = O3Layer(pooled_irreps, name=f"prepool_{blocks}")(
                 nodes, st_graph.node_attributes
             )
 
@@ -111,7 +119,7 @@ def O3Decoder(
             # post pool mlp (not steerable)
             for i in range(blocks):
                 nodes = O3TensorProductGate(
-                    latent_irreps, name=f"postpool_{i}", o3_layer=O3TensorProduct
+                    pooled_irreps, name=f"postpool_{i}", o3_layer=O3TensorProduct
                 )(nodes)
             nodes = O3TensorProduct(output_irreps, name="output")(nodes)
 
@@ -134,6 +142,7 @@ class SEGNNLayer(hk.Module):
         blocks: int = 2,
         norm: Optional[str] = None,
         aggregate_fn: Optional[Callable] = jraph.segment_sum,
+        residual: bool = True,
         O3Layer: TensorProduct = O3TensorProduct,
     ):
         """
@@ -145,6 +154,7 @@ class SEGNNLayer(hk.Module):
             blocks: Number of tensor product blocks in the layer
             norm: Normalization type. Either be None, 'instance' or 'batch'
             aggregate_fn: Message aggregation function. Defaults to sum.
+            residual: If true, use residual connections
             O3Layer: Type of tensor product layer to use
         """
         super().__init__(f"layer_{layer_num}")
@@ -153,6 +163,7 @@ class SEGNNLayer(hk.Module):
         self._blocks = blocks
         self._norm = norm
         self._aggregate_fn = aggregate_fn
+        self._residual = residual
 
         self._O3Layer = O3Layer
 
@@ -204,7 +215,10 @@ class SEGNNLayer(hk.Module):
             x, node_attribute
         )
         # residual connection
-        nodes += update
+        if self._residual:
+            nodes += update
+        else:
+            nodes = update
         # message norm
         if self._norm in ["batch", "instance"]:
             nodes = e3nn.haiku.BatchNorm(
@@ -271,10 +285,13 @@ class SEGNN(hk.Module):
         """
         super().__init__()
 
-        if isinstance(hidden_irreps, e3nn.Irreps):
-            self._hidden_irreps_units = num_layers * [hidden_irreps]
-        else:
-            self._hidden_irreps_units = hidden_irreps
+        if not isinstance(output_irreps, e3nn.Irreps):
+            output_irreps = e3nn.Irreps(output_irreps)
+        if not isinstance(hidden_irreps, e3nn.Irreps):
+            hidden_irreps = e3nn.Irreps(hidden_irreps)
+
+        self._hidden_irreps = hidden_irreps
+        self._num_layers = num_layers
 
         self._embed_msg_features = embed_msg_features
         self._norm = norm
@@ -290,17 +307,23 @@ class SEGNN(hk.Module):
             self._O3Layer = o3_layer
 
         self._embedding = O3Embedding(
-            self._hidden_irreps_units[0],
+            self._hidden_irreps,
             O3Layer=self._O3Layer,
             embed_edges=self._embed_msg_features,
         )
 
+        pooled_irreps = None
+        if task == "graph" and "0e" not in output_irreps:
+            # NOTE: different from original. This way proper gates are always applied
+            pooled_irreps = hidden_irreps
+
         self._decoder = O3Decoder(
-            latent_irreps=self._hidden_irreps_units[-1],
+            latent_irreps=self._hidden_irreps,
             output_irreps=output_irreps,
             O3Layer=self._O3Layer,
             task=task,
             pool=pool,
+            pooled_irreps=pooled_irreps,
         )
 
     def __call__(self, st_graph: SteerableGraphsTuple) -> jnp.array:
@@ -308,10 +331,10 @@ class SEGNN(hk.Module):
         st_graph = self._embedding(st_graph)
 
         # message passing
-        for n, hrp in enumerate(self._hidden_irreps_units):
-            st_graph = SEGNNLayer(output_irreps=hrp, layer_num=n, norm=self._norm)(
-                st_graph
-            )
+        for n in range(self._num_layers):
+            st_graph = SEGNNLayer(
+                output_irreps=self._hidden_irreps, layer_num=n, norm=self._norm
+            )(st_graph)
 
         # decoder/pooler
         nodes = self._decoder(st_graph)

@@ -232,10 +232,8 @@ if __name__ == "__main__":
         def _mae(p, t):
             return jnp.abs(p - t)
 
-        train_loss = partial(loss_fn_wrapper, criterion=_mae, task=args.task)
-        eval_loss = partial(
-            loss_fn_wrapper, criterion=_mae, eval_trn=eval_trn, task=args.task
-        )
+        train_loss = partial(loss_fn_wrapper, criterion=_mae)
+        eval_loss = partial(loss_fn_wrapper, criterion=_mae, eval_trn=eval_trn)
     if args.dataset in ["charged", "gravity"]:
         from experiments.train import loss_fn_wrapper
 

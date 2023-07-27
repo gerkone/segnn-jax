@@ -6,8 +6,16 @@ import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from e3nn_jax.experimental import linear_shtp as escn
-from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
+
+try:
+    from e3nn_jax.experimental import linear_shtp as escn
+except ImportError:
+    escn = None
+
+try:
+    from e3nn_jax import FunctionalFullyConnectedTensorProduct
+except ImportError:
+    from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct  # type: ignore
 
 from .config import config
 
@@ -136,10 +144,18 @@ class O3TensorProduct(TensorProduct):
             self.output_irreps,
             get_parameter=self.get_parameter,
             biases=self.biases,
-            name=f"{self.name}_linear",
             gradient_normalization=self._gradient_normalization,
             path_normalization=self._path_normalization,
         )
+
+    def _check_input(
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
+    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        x, y = super()._check_input(x, y)
+        miss = self.output_irreps.filter(drop=e3nn.tensor_product(x.irreps, y.irreps))
+        if len(miss) > 0:
+            warnings.warn(f"Output irreps: '{miss}' are unreachable and were ignored.")
+        return x, y
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
@@ -263,11 +279,16 @@ class O3TensorProductSCN(TensorProduct):
             path_normalization=path_normalization,
         )
 
+        if escn is None:
+            raise ImportError(
+                "eSCN is available from e3nn-jax>=0.17.4. "
+                f"Your version: {e3nn.__version__}"
+            )
+
         self._linear = e3nn.haiku.Linear(
             self.output_irreps,
             get_parameter=self.get_parameter,
             biases=self.biases,
-            name=f"{self.name}_linear",
             gradient_normalization=self._gradient_normalization,
             path_normalization=self._path_normalization,
         )
@@ -280,7 +301,7 @@ class O3TensorProductSCN(TensorProduct):
         return super()._check_input(x, y)
 
     def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
+        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
     ) -> e3nn.IrrepsArray:
         """Apply the layer. y must not be into spherical harmonics."""
         x, y = self._check_input(x, y)
@@ -355,6 +376,10 @@ def O3TensorProductGate(
         x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
     ) -> e3nn.IrrepsArray:
         tp = tensor_product(x, y, **kwargs)
-        return e3nn.gate(tp, even_act=scalar_activation, odd_gate_act=gate_activation)
+        # skip gate if the gating scalars are not reachable
+        if len(gate_irreps.filter(drop=tp.irreps)) > 0:
+            return tp
+        else:
+            return e3nn.gate(tp, scalar_activation, odd_gate_act=gate_activation)
 
     return _gated_tensor_product
