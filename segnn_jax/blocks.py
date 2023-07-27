@@ -15,7 +15,7 @@ except ImportError:
 try:
     from e3nn_jax import FunctionalFullyConnectedTensorProduct
 except ImportError:
-    from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct
+    from e3nn_jax.legacy import FunctionalFullyConnectedTensorProduct  # type: ignore
 
 from .config import config
 
