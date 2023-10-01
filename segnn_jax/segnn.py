@@ -4,6 +4,7 @@ import e3nn_jax as e3nn
 import haiku as hk
 import jax.numpy as jnp
 import jraph
+from e3nn_jax import IrrepsArray
 from jax.tree_util import Partial
 
 from .blocks import O3_LAYERS, O3TensorProduct, O3TensorProductGate, TensorProduct
@@ -169,13 +170,13 @@ class SEGNNLayer(hk.Module):
 
     def _message(
         self,
-        edge_attribute: e3nn.IrrepsArray,
-        additional_message_features: e3nn.IrrepsArray,
+        edge_attribute: IrrepsArray,
+        additional_message_features: IrrepsArray,
         edge_features: Any,
-        incoming: e3nn.IrrepsArray,
-        outgoing: e3nn.IrrepsArray,
+        incoming: IrrepsArray,
+        outgoing: IrrepsArray,
         globals_: Any,
-    ) -> e3nn.IrrepsArray:
+    ) -> IrrepsArray:
         """Steerable equivariant message function."""
         _ = globals_
         _ = edge_features
@@ -195,12 +196,12 @@ class SEGNNLayer(hk.Module):
 
     def _update(
         self,
-        node_attribute: e3nn.IrrepsArray,
-        nodes: e3nn.IrrepsArray,
+        node_attribute: IrrepsArray,
+        nodes: IrrepsArray,
         senders: Any,
-        msg: e3nn.IrrepsArray,
+        msg: IrrepsArray,
         globals_: Any,
-    ) -> e3nn.IrrepsArray:
+    ) -> IrrepsArray:
         """Steerable equivariant update function."""
         _ = senders
         _ = globals_

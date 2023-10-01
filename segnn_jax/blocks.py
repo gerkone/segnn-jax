@@ -6,12 +6,12 @@ import e3nn_jax as e3nn
 import haiku as hk
 import jax
 import jax.numpy as jnp
+from e3nn_jax import IrrepsArray
 
 try:
     from e3nn_jax.experimental import linear_shtp as escn
 except ImportError:
     escn = None
-
 try:
     from e3nn_jax import FunctionalFullyConnectedTensorProduct
 except ImportError:
@@ -20,7 +20,7 @@ except ImportError:
 from .config import config
 
 InitFn = Callable[[str, Tuple[int, ...], float, jnp.dtype], jnp.ndarray]
-TensorProductFn = Callable[[e3nn.IrrepsArray, e3nn.IrrepsArray], e3nn.IrrepsArray]
+TensorProductFn = Callable[[IrrepsArray, IrrepsArray], IrrepsArray]
 
 
 def uniform_init(
@@ -82,10 +82,10 @@ class TensorProduct(hk.Module, ABC):
         self.biases = biases and "0e" in self.output_irreps
 
     def _check_input(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        self, x: IrrepsArray, y: Optional[IrrepsArray] = None
+    ) -> Tuple[IrrepsArray, IrrepsArray]:
         if not y:
-            y = e3nn.IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
+            y = IrrepsArray("1x0e", jnp.ones((1, 1), dtype=x.dtype))
 
         if x.irreps.lmax == 0 and y.irreps.lmax == 0 and self.output_irreps.lmax > 0:
             warnings.warn(
@@ -98,8 +98,8 @@ class TensorProduct(hk.Module, ABC):
 
     @abstractmethod
     def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
-    ) -> e3nn.IrrepsArray:
+        self, x: IrrepsArray, y: Optional[IrrepsArray] = None, **kwargs
+    ) -> IrrepsArray:
         """Applies an O(3) equivariant linear parametrized tensor product layer.
 
         Args:
@@ -149,17 +149,15 @@ class O3TensorProduct(TensorProduct):
         )
 
     def _check_input(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        self, x: IrrepsArray, y: Optional[IrrepsArray] = None
+    ) -> Tuple[IrrepsArray, IrrepsArray]:
         x, y = super()._check_input(x, y)
         miss = self.output_irreps.filter(drop=e3nn.tensor_product(x.irreps, y.irreps))
         if len(miss) > 0:
             warnings.warn(f"Output irreps: '{miss}' are unreachable and were ignored.")
         return x, y
 
-    def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> e3nn.IrrepsArray:
+    def __call__(self, x: IrrepsArray, y: Optional[IrrepsArray] = None) -> IrrepsArray:
         x, y = self._check_input(x, y)
         # tensor product + linear
         tp = self._linear(e3nn.tensor_product(x, y))
@@ -200,7 +198,9 @@ class O3TensorProductFC(TensorProduct):
         ]
 
         def _tensor_product(x, y, **kwargs):
-            return tp.left_right(ws, x, y, **kwargs).rechunk(self.output_irreps)
+            out = tp.left_right(ws, x, y, **kwargs)
+            # same as out.rechunk(self.output_irreps) but works with older e3nn versions
+            return IrrepsArray(self.output_irreps, out.array)
 
         # naive broadcasting wrapper
         # TODO: not the best
@@ -224,10 +224,10 @@ class O3TensorProductFC(TensorProduct):
             for i_out, mul_ir in enumerate(self.output_irreps)
             if mul_ir.ir.is_scalar()
         ]
-        b = e3nn.IrrepsArray(f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b))
+        b = IrrepsArray(f"{self.output_irreps.count('0e')}x0e", jnp.concatenate(b))
 
         # TODO: could be improved
-        def _bias_wrapper(x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+        def _bias_wrapper(x: IrrepsArray) -> IrrepsArray:
             scalars = x.filter("0e")
             other = x.filter(drop="0e")
             return e3nn.concatenate(
@@ -237,8 +237,8 @@ class O3TensorProductFC(TensorProduct):
         return _bias_wrapper
 
     def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
-    ) -> e3nn.IrrepsArray:
+        self, x: IrrepsArray, y: Optional[IrrepsArray] = None, **kwargs
+    ) -> IrrepsArray:
         x, y = self._check_input(x, y)
 
         tp = self._build_tensor_product(x.irreps, y.irreps)
@@ -281,7 +281,7 @@ class O3TensorProductSCN(TensorProduct):
 
         if escn is None:
             raise ImportError(
-                "eSCN is available from e3nn-jax>=0.17.4. "
+                "eSCN is available from e3nn-jax>=0.17.3. "
                 f"Your version: {e3nn.__version__}"
             )
 
@@ -294,18 +294,21 @@ class O3TensorProductSCN(TensorProduct):
         )
 
     def _check_input(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> Tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+        self, x: IrrepsArray, y: Optional[IrrepsArray] = None
+    ) -> Tuple[IrrepsArray, IrrepsArray]:
         if not y:
             raise ValueError("eSCN cannot be used without the right input.")
         return super()._check_input(x, y)
 
-    def __call__(
-        self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> e3nn.IrrepsArray:
+    def __call__(self, x: IrrepsArray, y: Optional[IrrepsArray] = None) -> IrrepsArray:
         """Apply the layer. y must not be into spherical harmonics."""
         x, y = self._check_input(x, y)
-        shtp = e3nn.utils.vmap(escn.shtp, in_axes=(0, 0, None))
+        # TODO make this work for e3nn-jax<0.19.1 (without e3nn.utils.vmap)
+        try:
+            from e3nn_jax.utils import vmap as e3nn_vmap
+        except ImportError:
+            raise NotImplementedError()
+        shtp = e3nn_vmap(escn.shtp, in_axes=(0, 0, None))
         tp = shtp(x, y, self.output_irreps)
         return self._linear(tp)
 
@@ -373,8 +376,8 @@ def O3TensorProductGate(
         gate_activation = jax.nn.sigmoid
 
     def _gated_tensor_product(
-        x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None, **kwargs
-    ) -> e3nn.IrrepsArray:
+        x: IrrepsArray, y: Optional[IrrepsArray] = None, **kwargs
+    ) -> IrrepsArray:
         tp = tensor_product(x, y, **kwargs)
         # skip gate if the gating scalars are not reachable
         if len(gate_irreps.filter(drop=tp.irreps)) > 0:
