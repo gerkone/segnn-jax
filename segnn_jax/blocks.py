@@ -159,7 +159,7 @@ class O3TensorProduct(TensorProduct):
 
     def __call__(
         self, x: e3nn.IrrepsArray, y: Optional[e3nn.IrrepsArray] = None
-    ) -> TensorProductFn:
+    ) -> e3nn.IrrepsArray:
         x, y = self._check_input(x, y)
         # tensor product + linear
         tp = self._linear(e3nn.tensor_product(x, y))

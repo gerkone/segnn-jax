@@ -116,7 +116,7 @@ def train(
         learning_rate=learning_rate, weight_decay=args.weight_decay
     )
 
-    model_fn = segnn.apply
+    model_fn = jit(segnn.apply)
 
     loss_fn = partial(loss_fn, model_fn=model_fn)
     eval_loss_fn = partial(eval_loss_fn, model_fn=model_fn)
