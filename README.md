@@ -31,7 +31,7 @@ Times are remeasured on Quadro RTX 4000, __model only__ on batches of 100 graphs
 <table>
   <tr>
     <td></td>
-    <td colspan="2"><b>torch (original)</b></td>
+    <td colspan="2"><b><a href="https://github.com/RobDHess/Steerable-E3-GNN">torch (original)</a></b></td>
     <td colspan="2"><b>jax (ours)</b></td>
   </tr>
   <tr>
