@@ -1,7 +1,7 @@
 import e3nn_jax as e3nn
 import haiku as hk
 import pytest
-from e3nn_jax.utils import assert_equivariant
+from conftest import assert_equivariant
 
 from segnn_jax import (
     O3TensorProduct,

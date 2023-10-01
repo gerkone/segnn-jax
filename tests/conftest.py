@@ -40,3 +40,14 @@ def dummy_graph():
 @pytest.fixture
 def key():
     return jax.random.PRNGKey(0)
+
+
+def assert_equivariant(fun, key, *args, **kwargs):
+    try:
+        from e3nn_jax.utils import assert_equivariant as _assert_equivariant
+
+        _assert_equivariant(fun, key, *args, **kwargs)
+    except (ImportError, AttributeError):
+        from e3nn_jax.util import assert_equivariant as _assert_equivariant
+
+        _assert_equivariant(fun, key, args_in=args, **kwargs)
